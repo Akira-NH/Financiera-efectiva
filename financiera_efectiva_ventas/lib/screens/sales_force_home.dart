@@ -8,7 +8,6 @@ import 'customer_screen.dart';
 import 'portfolio_screen.dart';
 import 'requests_screen.dart';
 import 'route_screen.dart';
-import 'scoring_screen.dart';
 
 class SalesForceHome extends StatefulWidget {
   const SalesForceHome({super.key});
@@ -28,6 +27,12 @@ class _SalesForceHomeState extends State<SalesForceHome> {
     repositoryFuture = salesService.loadRepository();
   }
 
+  void _refreshRepository() {
+    setState(() {
+      repositoryFuture = salesService.loadRepository();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final destinations = const [
@@ -35,7 +40,6 @@ class _SalesForceHomeState extends State<SalesForceHome> {
       _Destination('Ruta', Icons.map_outlined),
       _Destination('Cliente', Icons.badge_outlined),
       _Destination('Solicitud', Icons.edit_document),
-      _Destination('Scoring', Icons.analytics_outlined),
       _Destination('Estados', Icons.timeline_outlined),
     ];
     final wide = MediaQuery.sizeOf(context).width >= 860;
@@ -51,8 +55,10 @@ class _SalesForceHomeState extends State<SalesForceHome> {
                 RouteScreen(repository: repository),
                 CustomerScreen(repository: repository),
                 ApplicationScreen(repository: repository),
-                const ScoringScreen(),
-                RequestsScreen(repository: repository),
+                RequestsScreen(
+                  repository: repository,
+                  onRepositoryChanged: _refreshRepository,
+                ),
               ];
 
         return Scaffold(

@@ -15,6 +15,10 @@ Color segmentColor(String segment) {
     'PREMIER' => AppTheme.brandBlue,
     'ESTANDAR' => AppTheme.brandNavy,
     'BASICO' => AppTheme.brandGold,
+    'Bajo' => Colors.green,
+    'Medio' => AppTheme.brandGold,
+    'Alto' => AppTheme.brandCoral,
+    'Rechazo automatico' => AppTheme.brandCoral,
     _ => AppTheme.brandCoral,
   };
 }

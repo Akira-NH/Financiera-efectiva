@@ -1,3 +1,3 @@
 class Env {
-  static const googleRoutesFunctionUrl = '';
+  const Env._();
 }

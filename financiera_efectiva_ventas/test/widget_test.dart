@@ -1,5 +1,6 @@
 import 'package:financiera_efectiva_ventas/app.dart';
 import 'package:financiera_efectiva_ventas/data/repositories/mock_sales_repository.dart';
+import 'package:financiera_efectiva_ventas/data/services/credit_scoring_service.dart';
 import 'package:financiera_efectiva_ventas/data/services/firestore_sales_service.dart';
 import 'package:financiera_efectiva_ventas/data/services/power_bi_export_service.dart';
 import 'package:financiera_efectiva_ventas/utils/scoring.dart';
@@ -21,6 +22,72 @@ void main() {
     expect(classifyFinal(620, false), 'ESTANDAR');
     expect(classifyFinal(360, false), 'BASICO');
     expect(classifyFinal(900, true), 'NO APLICA');
+  });
+
+  test('evaluates internal credit scoring decisions', () {
+    const service = CreditScoringService();
+
+    final lowRisk = service.evaluate(
+      const CreditScoringInput(
+        ingresosMensuales: 7200,
+        gastosMensuales: 2400,
+        cuotasMensualesActuales: 600,
+        deudaActual: 900,
+        numeroCreditosActivos: 1,
+        puntualidadPago: 98,
+        diasMora: 0,
+        tieneDeudaVencida: false,
+        reportadoSbs: false,
+        enListaNegra: false,
+        evidenciaFraude: false,
+        montoSolicitado: 9000,
+        plazoMeses: 12,
+        antiguedadLaboralMeses: 48,
+        historialPagos: 'excelente',
+      ),
+    );
+    final manualReview = service.evaluate(
+      const CreditScoringInput(
+        ingresosMensuales: 3800,
+        gastosMensuales: 2100,
+        cuotasMensualesActuales: 450,
+        deudaActual: 1100,
+        numeroCreditosActivos: 2,
+        puntualidadPago: 84,
+        diasMora: 7,
+        tieneDeudaVencida: false,
+        reportadoSbs: false,
+        enListaNegra: false,
+        evidenciaFraude: false,
+        montoSolicitado: 10000,
+        plazoMeses: 18,
+        antiguedadLaboralMeses: 18,
+        historialPagos: 'regular',
+      ),
+    );
+    final veto = service.evaluate(
+      const CreditScoringInput(
+        ingresosMensuales: 9000,
+        gastosMensuales: 2000,
+        cuotasMensualesActuales: 0,
+        deudaActual: 0,
+        numeroCreditosActivos: 0,
+        puntualidadPago: 100,
+        diasMora: 0,
+        tieneDeudaVencida: false,
+        reportadoSbs: false,
+        enListaNegra: true,
+        evidenciaFraude: false,
+        montoSolicitado: 5000,
+        plazoMeses: 6,
+        antiguedadLaboralMeses: 60,
+        historialPagos: 'excelente',
+      ),
+    );
+
+    expect(lowRisk.estadoEvaluacion, 'Aprobado');
+    expect(manualReview.estadoEvaluacion, 'Revision manual');
+    expect(veto.estadoEvaluacion, 'Rechazado');
   });
 
   test('builds Firestore sync summary and Power BI dataset', () {
