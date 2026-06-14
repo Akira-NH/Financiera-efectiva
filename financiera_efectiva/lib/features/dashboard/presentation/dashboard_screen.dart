@@ -22,14 +22,24 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   int _currentIndex = 0;
   int _refreshToken = 0;
+  final Set<int> _loadedTabs = {0};
 
   @override
   Widget build(BuildContext context) {
     final pages = [
       _DashboardHome(refreshToken: _refreshToken),
-      const OperationMenuScreen(),
-      const CreditsScreen(showAppBar: false),
-      OperationHistoryScreen(showAppBar: false, refreshToken: _refreshToken),
+      _loadedTabs.contains(1)
+          ? const OperationMenuScreen()
+          : const SizedBox.shrink(),
+      _loadedTabs.contains(2)
+          ? const CreditsScreen(showAppBar: false)
+          : const SizedBox.shrink(),
+      _loadedTabs.contains(3)
+          ? OperationHistoryScreen(
+              showAppBar: false,
+              refreshToken: _refreshToken,
+            )
+          : const SizedBox.shrink(),
     ];
 
     return Scaffold(
@@ -39,6 +49,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) => setState(() {
           _currentIndex = index;
+          _loadedTabs.add(index);
           _refreshToken++;
         }),
         destinations: const [
@@ -95,11 +106,10 @@ class _DashboardHomeState extends State<_DashboardHome> {
 
   Future<_DashboardHomeData> _loadHomeData() async {
     final service = FinancialFirestoreService.instance;
-    await service.ensureClientFinancialProfile();
 
     final results = await Future.wait([
-      service.getSummary(),
-      service.getMovements(limit: 5),
+      service.getCachedSummary(),
+      service.getCachedMovements(limit: 5),
     ]);
 
     return _DashboardHomeData(
@@ -115,8 +125,13 @@ class _DashboardHomeState extends State<_DashboardHome> {
       builder: (context, snapshot) {
         return RefreshIndicator(
           onRefresh: () async {
-            setState(() => _homeFuture = _loadHomeData());
-            await _homeFuture;
+            final future = _loadHomeData();
+            setState(() => _homeFuture = future);
+            try {
+              await future;
+            } catch (_) {
+              // FutureBuilder muestra el error; el refresh solo debe cerrarse.
+            }
           },
           child: ListView(
             padding: const EdgeInsets.all(16),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/services/financial_firestore_service.dart';
 import '../../../core/utils/formatters.dart';
+import '../domain/entities/loan.dart';
 
 class LoanDetailScreen extends StatelessWidget {
   const LoanDetailScreen({super.key});
@@ -10,24 +11,34 @@ class LoanDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Detalle del crédito')),
-      body: FutureBuilder(
+      body: FutureBuilder<Loan?>(
         future: FinancialFirestoreService.instance.getActiveLoan(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(16),
+                child: Text('No se pudo cargar el detalle.\n${snapshot.error}'),
+              ),
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final loan = snapshot.data;
+          if (loan == null) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
                 child: Text(
-                  'No se pudo cargar el detalle.\n${snapshot.error}',
+                  'No hay un crédito aprobado y desembolsado para mostrar.',
+                  textAlign: TextAlign.center,
                 ),
               ),
             );
           }
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
 
-          final loan = snapshot.data!;
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [

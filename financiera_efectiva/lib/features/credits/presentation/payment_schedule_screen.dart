@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/services/financial_firestore_service.dart';
 import '../../../core/utils/formatters.dart';
+import '../domain/entities/installment.dart';
 
 class PaymentScheduleScreen extends StatelessWidget {
   const PaymentScheduleScreen({super.key});
@@ -10,7 +11,7 @@ class PaymentScheduleScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Cronograma de pagos')),
-      body: FutureBuilder(
+      body: FutureBuilder<List<Installment>>(
         future: FinancialFirestoreService.instance.getInstallments(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {

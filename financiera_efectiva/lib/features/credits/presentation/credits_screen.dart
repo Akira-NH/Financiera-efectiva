@@ -20,10 +20,23 @@ class CreditsScreen extends StatefulWidget {
 }
 
 class _CreditsScreenState extends State<CreditsScreen> {
-  late Future<Loan> _loanFuture;
+  static const _purposeOptions = [
+    'Capital de trabajo',
+    'Compra de mercadería',
+    'Mejoramiento de vivienda',
+    'Educación',
+    'Salud',
+    'Pago de deudas',
+    'Compra de activos o herramientas',
+    'Negocio o emprendimiento',
+    'Otros',
+  ];
+
+  late Future<Loan?> _loanFuture;
   final _formKey = GlobalKey<FormState>();
   final _amountController = TextEditingController();
   final _purposeController = TextEditingController();
+  String _selectedPurpose = _purposeOptions.first;
   int _termMonths = 12;
   bool _isSubmitting = false;
 
@@ -62,18 +75,20 @@ class _CreditsScreenState extends State<CreditsScreen> {
 
     setState(() => _isSubmitting = true);
     try {
+      final purpose = _selectedPurpose == 'Otros'
+          ? _purposeController.text.trim()
+          : _selectedPurpose;
       await FinancialFirestoreService.instance.submitCreditRequest(
         amount: _parseAmount(_amountController.text)!,
         termMonths: _termMonths,
-        purpose: _purposeController.text,
+        purpose: purpose,
       );
       if (!mounted) return;
       _amountController.clear();
       _purposeController.clear();
+      setState(() => _selectedPurpose = _purposeOptions.first);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Solicitud enviada a fuerza de ventas.'),
-        ),
+        const SnackBar(content: Text('Solicitud enviada a fuerza de ventas.')),
       );
     } catch (error) {
       if (!mounted) return;
@@ -92,7 +107,7 @@ class _CreditsScreenState extends State<CreditsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: widget.showAppBar ? const AppTopBar() : null,
-      body: FutureBuilder<Loan>(
+      body: FutureBuilder<Loan?>(
         future: _loanFuture,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
@@ -103,48 +118,61 @@ class _CreditsScreenState extends State<CreditsScreen> {
               ),
             );
           }
-          if (!snapshot.hasData) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final loan = snapshot.data!;
+          final loan = snapshot.data;
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              _ActiveLoanCard(loan: loan),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () =>
-                          Navigator.pushNamed(context, RouteNames.loanDetail),
-                      icon: const Icon(Icons.info_outline),
-                      label: const Text('Detalle'),
+              if (loan == null) ...[
+                const _NoActiveLoanCard(),
+              ] else ...[
+                _ActiveLoanCard(loan: loan),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () =>
+                            Navigator.pushNamed(context, RouteNames.loanDetail),
+                        icon: const Icon(Icons.info_outline),
+                        label: const Text('Detalle'),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pushNamed(
-                          context,
-                          RouteNames.paymentSchedule,
-                        );
-                      },
-                      icon: const Icon(Icons.calendar_month),
-                      label: const Text('Cronograma'),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pushNamed(
+                            context,
+                            RouteNames.paymentSchedule,
+                          );
+                        },
+                        icon: const Icon(Icons.calendar_month),
+                        label: const Text('Cronograma'),
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 20),
               _CreditRequestForm(
                 formKey: _formKey,
                 amountController: _amountController,
                 purposeController: _purposeController,
+                purposeOptions: _purposeOptions,
+                selectedPurpose: _selectedPurpose,
                 termMonths: _termMonths,
                 isSubmitting: _isSubmitting,
+                onPurposeChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _selectedPurpose = value;
+                    if (value != 'Otros') _purposeController.clear();
+                  });
+                },
                 onTermChanged: (value) {
                   if (value == null) return;
                   setState(() => _termMonths = value);
@@ -187,13 +215,44 @@ class _ActiveLoanCard extends StatelessWidget {
   }
 }
 
+class _NoActiveLoanCard extends StatelessWidget {
+  const _NoActiveLoanCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.assignment_outlined,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Sin préstamo activo',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Cuando una solicitud sea aprobada y desembolsada, aparecerá aquí con su cronograma de pagos.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CreditRequestForm extends StatelessWidget {
   const _CreditRequestForm({
     required this.formKey,
     required this.amountController,
     required this.purposeController,
+    required this.purposeOptions,
+    required this.selectedPurpose,
     required this.termMonths,
     required this.isSubmitting,
+    required this.onPurposeChanged,
     required this.onTermChanged,
     required this.onSubmit,
     required this.amountValidator,
@@ -202,8 +261,11 @@ class _CreditRequestForm extends StatelessWidget {
   final GlobalKey<FormState> formKey;
   final TextEditingController amountController;
   final TextEditingController purposeController;
+  final List<String> purposeOptions;
+  final String selectedPurpose;
   final int termMonths;
   final bool isSubmitting;
+  final ValueChanged<String?> onPurposeChanged;
   final ValueChanged<int?> onTermChanged;
   final VoidCallback onSubmit;
   final String? Function(String?) amountValidator;
@@ -243,17 +305,52 @@ class _CreditRequestForm extends StatelessWidget {
               onChanged: isSubmitting ? null : onTermChanged,
             ),
             const SizedBox(height: 12),
-            AppTextField(
-              label: 'Destino del crédito',
-              hint: 'Capital de trabajo, compra, mejora, etc.',
-              controller: purposeController,
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Indica el destino del crédito.';
-                }
-                return null;
+            DropdownButtonFormField<String>(
+              initialValue: selectedPurpose,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Destino del crédito',
+              ),
+              items: [
+                for (final purpose in purposeOptions)
+                  DropdownMenuItem(
+                    value: purpose,
+                    child: Text(
+                      purpose,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              selectedItemBuilder: (context) {
+                return [
+                  for (final purpose in purposeOptions)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        purpose,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ];
               },
+              onChanged: isSubmitting ? null : onPurposeChanged,
             ),
+            if (selectedPurpose == 'Otros') ...[
+              const SizedBox(height: 12),
+              AppTextField(
+                label: 'Especifica el destino',
+                hint: 'Describe el motivo del crédito',
+                controller: purposeController,
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Especifica el destino del crédito.';
+                  }
+                  return null;
+                },
+              ),
+            ],
             const SizedBox(height: 16),
             AppButton(
               label: isSubmitting ? 'Enviando...' : 'Enviar solicitud',

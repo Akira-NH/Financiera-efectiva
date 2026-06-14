@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 
-import '../../features/credits/data/credits_mock_data.dart';
 import '../../features/credits/domain/entities/installment.dart';
 import '../../features/credits/domain/entities/loan.dart';
 import '../../features/dashboard/data/dashboard_mock_data.dart';
@@ -91,17 +90,13 @@ class FinancialFirestoreService {
       } else {
         final data = clientDoc.data() ?? {};
         final updates = <String, Object?>{};
-        final hasSeededProfile =
-            data['financialProfileSeeded'] as bool? ?? false;
         final totalBalance = data['totalBalance'] as num?;
         final savingsBalance = data['savingsBalance'] as num?;
-
-        if (!hasSeededProfile && (totalBalance == null || totalBalance == 0)) {
-          updates['totalBalance'] = initialBalance;
+        if (!data.containsKey('totalBalance')) {
+          updates['totalBalance'] = savingsBalance ?? initialBalance;
         }
-        if (!hasSeededProfile &&
-            (savingsBalance == null || savingsBalance == 0)) {
-          updates['savingsBalance'] = initialBalance;
+        if (!data.containsKey('savingsBalance')) {
+          updates['savingsBalance'] = totalBalance ?? initialBalance;
         }
         if (!data.containsKey('activeLoansBalance')) {
           updates['activeLoansBalance'] = 0;
@@ -109,33 +104,41 @@ class FinancialFirestoreService {
         if (!data.containsKey('piggyBankBalance')) {
           updates['piggyBankBalance'] = 0;
         }
-        if (!hasSeededProfile) {
+        if (!data.containsKey('financialProfileSeeded')) {
           updates['financialProfileSeeded'] = true;
         }
         if (updates.isNotEmpty) transaction.update(clientRef, updates);
       }
 
       if (!savingsDoc.exists) {
+        final clientData = clientDoc.data() ?? {};
+        final savingsBalance =
+            clientData['savingsBalance'] as num? ??
+            clientData['totalBalance'] as num? ??
+            initialBalance;
+        final piggyBankBalance = clientData['piggyBankBalance'] as num? ?? 0;
         transaction.set(savingsRef, {
           'number': 'AHO-${clientId.substring(0, 6).toUpperCase()}',
-          'balance': initialBalance,
-          'piggyBankBalance': 0,
+          'balance': savingsBalance,
+          'piggyBankBalance': piggyBankBalance,
           'status': 'Activa',
           'createdAt': FieldValue.serverTimestamp(),
         });
       } else {
         final savingsData = savingsDoc.data() ?? {};
         final clientData = clientDoc.data() ?? {};
-        final hasSeededProfile = clientDoc.exists
-            ? clientData['financialProfileSeeded'] as bool? ?? false
-            : false;
-        final balance = savingsData['balance'] as num?;
-        if (!hasSeededProfile && (balance == null || balance == 0)) {
-          transaction.update(savingsRef, {'balance': initialBalance});
+        final updates = <String, Object?>{};
+        if (!savingsData.containsKey('balance')) {
+          updates['balance'] =
+              clientData['savingsBalance'] as num? ??
+              clientData['totalBalance'] as num? ??
+              initialBalance;
         }
         if (!savingsData.containsKey('piggyBankBalance')) {
-          transaction.update(savingsRef, {'piggyBankBalance': 0});
+          updates['piggyBankBalance'] =
+              clientData['piggyBankBalance'] as num? ?? 0;
         }
+        if (updates.isNotEmpty) transaction.update(savingsRef, updates);
       }
     });
   }
@@ -160,6 +163,26 @@ class FinancialFirestoreService {
       savingsBalance: data['savingsBalance'] as num? ?? initialBalance,
       activeLoansBalance: data['activeLoansBalance'] as num? ?? 0,
     );
+  }
+
+  Future<FinancialSummary> getCachedSummary() async {
+    final firestore = _firestore;
+    if (firestore == null) return DashboardMockData.summary;
+
+    Map<String, dynamic>? data;
+    try {
+      final doc = await firestore
+          .collection('clients')
+          .doc(_clientId)
+          .get(const GetOptions(source: Source.cache))
+          .timeout(const Duration(seconds: 2));
+      data = doc.data();
+    } catch (_) {
+      data = null;
+    }
+
+    data ??= await _fetchClientDataFromServer(firestore);
+    return _summaryFromClientData(data);
   }
 
   Future<List<Movement>> getMovements({int? limit}) async {
@@ -187,6 +210,98 @@ class FinancialFirestoreService {
         isIncome: data['isIncome'] as bool? ?? false,
       );
     }).toList();
+  }
+
+  Future<List<Movement>> getCachedMovements({int? limit}) async {
+    final firestore = _firestore;
+    if (firestore == null) return DashboardMockData.movements;
+
+    QuerySnapshot<Map<String, dynamic>>? snapshot;
+    try {
+      Query<Map<String, dynamic>> query = firestore
+          .collection('clients')
+          .doc(_clientId)
+          .collection('movements')
+          .orderBy('createdAt', descending: true);
+
+      if (limit != null) query = query.limit(limit);
+
+      snapshot = await query
+          .get(const GetOptions(source: Source.cache))
+          .timeout(const Duration(seconds: 2));
+    } catch (_) {
+      snapshot = null;
+    }
+
+    if (snapshot == null || snapshot.docs.isEmpty) {
+      snapshot = await _fetchMovementsFromServer(firestore, limit: limit);
+    }
+
+    if (snapshot == null || snapshot.docs.isEmpty) {
+      return const [];
+    }
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+      return Movement(
+        title: data['title'] as String? ?? 'Movimiento',
+        date: data['date'] as String? ?? '',
+        amount: data['amount'] as num? ?? 0,
+        isIncome: data['isIncome'] as bool? ?? false,
+      );
+    }).toList();
+  }
+
+  Future<Map<String, dynamic>?> _fetchClientDataFromServer(
+    FirebaseFirestore firestore,
+  ) async {
+    try {
+      final doc = await firestore
+          .collection('clients')
+          .doc(_clientId)
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 6));
+      return doc.data();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<QuerySnapshot<Map<String, dynamic>>?> _fetchMovementsFromServer(
+    FirebaseFirestore firestore, {
+    int? limit,
+  }) async {
+    try {
+      Query<Map<String, dynamic>> query = firestore
+          .collection('clients')
+          .doc(_clientId)
+          .collection('movements')
+          .orderBy('createdAt', descending: true);
+
+      if (limit != null) query = query.limit(limit);
+
+      return query
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 6));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  FinancialSummary _summaryFromClientData(Map<String, dynamic>? data) {
+    if (data == null) {
+      return const FinancialSummary(
+        totalBalance: 0,
+        savingsBalance: 0,
+        activeLoansBalance: 0,
+      );
+    }
+
+    return FinancialSummary(
+      totalBalance: data['totalBalance'] as num? ?? 0,
+      savingsBalance: data['savingsBalance'] as num? ?? 0,
+      activeLoansBalance: data['activeLoansBalance'] as num? ?? 0,
+    );
   }
 
   Future<SavingsAccount> getSavingsAccount() async {
@@ -291,7 +406,8 @@ class FinancialFirestoreService {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       transaction.set(savingsRef, {
-        'number': savingsData['number'] as String? ??
+        'number':
+            savingsData['number'] as String? ??
             'AHO-${_clientId.substring(0, 6).toUpperCase()}',
         'balance': newAvailableBalance,
         'piggyBankBalance': newPiggyBankBalance,
@@ -322,7 +438,8 @@ class FinancialFirestoreService {
       });
 
       return SavingsAccount(
-        number: savingsData['number'] as String? ??
+        number:
+            savingsData['number'] as String? ??
             'AHO-${_clientId.substring(0, 6).toUpperCase()}',
         balance: newAvailableBalance,
         piggyBankBalance: newPiggyBankBalance,
@@ -377,9 +494,9 @@ class FinancialFirestoreService {
     }).toList();
   }
 
-  Future<Loan> getActiveLoan() async {
+  Future<Loan?> getActiveLoan() async {
     final firestore = _firestore;
-    if (firestore == null) return CreditsMockData.activeLoan;
+    if (firestore == null) return null;
 
     final doc = await firestore
         .collection('clients')
@@ -389,19 +506,33 @@ class FinancialFirestoreService {
         .get();
 
     final data = doc.data();
-    if (data == null) return CreditsMockData.activeLoan;
+    if (data == null) return null;
+
+    final status = data['status'] as String? ?? '';
+    final isDisbursed = data['isDisbursed'] as bool? ?? true;
+    final normalizedStatus = status.toLowerCase();
+    final isApprovedStatus =
+        normalizedStatus.contains('aprob') ||
+        normalizedStatus.contains('desembols') ||
+        normalizedStatus.contains('al dia') ||
+        normalizedStatus.contains('al d');
+
+    if (!isDisbursed || !isApprovedStatus) return null;
 
     return Loan(
       id: data['id'] as String? ?? doc.id,
       amount: data['amount'] as num? ?? 0,
       pendingBalance: data['pendingBalance'] as num? ?? 0,
-      status: data['status'] as String? ?? 'Al día',
+      status: status.isEmpty ? 'Al dia' : status,
     );
   }
 
   Future<List<Installment>> getInstallments() async {
     final firestore = _firestore;
-    if (firestore == null) return CreditsMockData.installments;
+    if (firestore == null) return const [];
+
+    final activeLoan = await getActiveLoan();
+    if (activeLoan == null) return const [];
 
     final snapshot = await firestore
         .collection('clients')
@@ -410,7 +541,7 @@ class FinancialFirestoreService {
         .orderBy('number')
         .get();
 
-    if (snapshot.docs.isEmpty) return CreditsMockData.installments;
+    if (snapshot.docs.isEmpty) return const [];
 
     return snapshot.docs.map((doc) {
       final data = doc.data();
@@ -455,8 +586,7 @@ class FinancialFirestoreService {
         clientData['documentNumber'] as String? ??
         localClient?.documentNumber ??
         _clientId;
-    final phone =
-        clientData['phone'] as String? ?? localClient?.phone ?? '';
+    final phone = clientData['phone'] as String? ?? localClient?.phone ?? '';
     final email =
         clientData['email'] as String? ??
         currentUser?.email ??
@@ -491,6 +621,7 @@ class FinancialFirestoreService {
     batch.set(salesRequestRef, {
       'cliente': fullName,
       'monto': amountLabel,
+      'amount': amount,
       'segmento': 'POR EVALUAR',
       'estado': 'Preaprobado',
       'clientId': _clientId,
@@ -623,20 +754,19 @@ class FinancialFirestoreService {
 
   Future<List<ServiceNotification>> getServiceNotifications() async {
     final bills = await getServiceBills();
-    return bills
-        .where((bill) => !bill.isPaid || bill.allowRepeatedPayments)
-        .map((bill) {
-          final title = bill.isDueSoon
-              ? '${bill.type} próximo a vencer'
-              : '${bill.type} pendiente de pago';
-          return ServiceNotification(
-            title: title,
-            message:
-                '${bill.companyName} vence el ${bill.dueDateLabel} por S/ ${bill.amount.toStringAsFixed(2)}.',
-            iconName: bill.type,
-          );
-        })
-        .toList();
+    return bills.where((bill) => !bill.isPaid || bill.allowRepeatedPayments).map((
+      bill,
+    ) {
+      final title = bill.isDueSoon
+          ? '${bill.type} próximo a vencer'
+          : '${bill.type} pendiente de pago';
+      return ServiceNotification(
+        title: title,
+        message:
+            '${bill.companyName} vence el ${bill.dueDateLabel} por S/ ${bill.amount.toStringAsFixed(2)}.',
+        iconName: bill.type,
+      );
+    }).toList();
   }
 
   Future<void> payServiceBill(ServiceBill bill) async {
@@ -731,10 +861,7 @@ class FinancialFirestoreService {
     });
   }
 
-  OperationContact _contactFromData(
-    String id,
-    Map<String, dynamic> data,
-  ) {
+  OperationContact _contactFromData(String id, Map<String, dynamic> data) {
     return OperationContact(
       id: id,
       fullName: data['fullName'] as String? ?? 'Cliente sin nombre',
@@ -756,9 +883,7 @@ class FinancialFirestoreService {
         .where((doc) => doc.id != _clientId)
         .map((doc) => _contactFromData(doc.id, doc.data()))
         .where(
-          (contact) => contact.fullName.toLowerCase().contains(
-            normalizedQuery,
-          ),
+          (contact) => contact.fullName.toLowerCase().contains(normalizedQuery),
         )
         .toList()
       ..sort((a, b) => a.fullName.compareTo(b.fullName));
@@ -787,7 +912,10 @@ class FinancialFirestoreService {
       throw const AppException('No puedes agregarte a tus accesos rápidos.');
     }
 
-    final contactDoc = await firestore.collection('clients').doc(contact.id).get();
+    final contactDoc = await firestore
+        .collection('clients')
+        .doc(contact.id)
+        .get();
     if (!contactDoc.exists) {
       throw const AppException('El contacto seleccionado no existe.');
     }
@@ -855,10 +983,12 @@ class FinancialFirestoreService {
     final senderMovementRef = senderRef.collection('movements').doc();
     final recipientMovementRef = recipientRef.collection('movements').doc();
 
-    final senderDoc = await senderRef.get().timeout(const Duration(seconds: 10));
-    final recipientDoc = await recipientRef
-        .get()
-        .timeout(const Duration(seconds: 10));
+    final senderDoc = await senderRef.get().timeout(
+      const Duration(seconds: 10),
+    );
+    final recipientDoc = await recipientRef.get().timeout(
+      const Duration(seconds: 10),
+    );
 
     final senderData = senderDoc.data() ?? {};
     final recipientData = recipientDoc.data();
