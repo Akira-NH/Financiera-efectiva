@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../../../app/routes/route_names.dart';
 import '../../../core/errors/app_exception.dart';
@@ -8,6 +9,7 @@ import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/app_card.dart';
 import '../../../core/widgets/app_text_field.dart';
 import '../../../core/widgets/app_top_bar.dart';
+import '../domain/entities/credit_request_status.dart';
 import '../domain/entities/loan.dart';
 
 class CreditsScreen extends StatefulWidget {
@@ -78,10 +80,16 @@ class _CreditsScreenState extends State<CreditsScreen> {
       final purpose = _selectedPurpose == 'Otros'
           ? _purposeController.text.trim()
           : _selectedPurpose;
+      final position = await _requestCurrentPosition();
       await FinancialFirestoreService.instance.submitCreditRequest(
         amount: _parseAmount(_amountController.text)!,
         termMonths: _termMonths,
         purpose: purpose,
+        latitude: position?.latitude,
+        longitude: position?.longitude,
+        locationLabel: position == null
+            ? null
+            : '${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}',
       );
       if (!mounted) return;
       _amountController.clear();
@@ -101,6 +109,25 @@ class _CreditsScreenState extends State<CreditsScreen> {
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
+  }
+
+  Future<Position?> _requestCurrentPosition() async {
+    final enabled = await Geolocator.isLocationServiceEnabled();
+    if (!enabled) return null;
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return null;
+    }
+    return Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        timeLimit: Duration(seconds: 12),
+      ),
+    );
   }
 
   @override
@@ -158,6 +185,11 @@ class _CreditsScreenState extends State<CreditsScreen> {
                 ),
               ],
               const SizedBox(height: 20),
+              _CreditRequestStatusSection(
+                requestsStream: FinancialFirestoreService.instance
+                    .watchCreditRequestStatuses(),
+              ),
+              const SizedBox(height: 20),
               _CreditRequestForm(
                 formKey: _formKey,
                 amountController: _amountController,
@@ -184,6 +216,98 @@ class _CreditsScreenState extends State<CreditsScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+class _CreditRequestStatusSection extends StatelessWidget {
+  const _CreditRequestStatusSection({required this.requestsStream});
+
+  final Stream<List<CreditRequestStatus>> requestsStream;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<CreditRequestStatus>>(
+      stream: requestsStream,
+      builder: (context, snapshot) {
+        final requests = snapshot.data ?? const <CreditRequestStatus>[];
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            requests.isEmpty) {
+          return const AppCard(
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (requests.isEmpty) {
+          return const AppCard(
+            child: Text('Aun no tienes solicitudes de credito registradas.'),
+          );
+        }
+
+        return AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Estado de solicitud',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 12),
+              for (final request in requests.take(3)) ...[
+                _CreditRequestStatusTile(request: request),
+                if (request != requests.take(3).last)
+                  const Divider(height: 20),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CreditRequestStatusTile extends StatelessWidget {
+  const _CreditRequestStatusTile({required this.request});
+
+  final CreditRequestStatus request;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (request.status) {
+      'Aceptado' => Colors.green,
+      'Negado' => Colors.red,
+      _ => Colors.orange,
+    };
+    final icon = switch (request.status) {
+      'Aceptado' => Icons.check_circle_outline,
+      'Negado' => Icons.cancel_outlined,
+      _ => Icons.hourglass_top_outlined,
+    };
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: color),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                request.status,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(color: color, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              Text('Monto: ${Formatters.currency(request.amount)}'),
+              Text('Plazo: ${request.termMonths} meses'),
+              Text('Destino: ${request.purpose}'),
+              Text('Actualizado: ${request.updatedAtLabel}'),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

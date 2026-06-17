@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../data/models/client.dart';
 import '../data/repositories/sales_repository.dart';
 import '../data/services/firestore_sales_service.dart';
 import '../widgets/app_shell_widgets.dart';
 import 'application_screen.dart';
 import 'customer_screen.dart';
 import 'portfolio_screen.dart';
-import 'requests_screen.dart';
 import 'route_screen.dart';
 
 class SalesForceHome extends StatefulWidget {
@@ -18,18 +18,19 @@ class SalesForceHome extends StatefulWidget {
 
 class _SalesForceHomeState extends State<SalesForceHome> {
   final salesService = const FirestoreSalesService();
-  late Future<SalesRepository> repositoryFuture;
+  late Stream<SalesRepository> repositoryStream;
   int selectedIndex = 0;
+  String? selectedClientKey;
 
   @override
   void initState() {
     super.initState();
-    repositoryFuture = salesService.loadRepository();
+    repositoryStream = salesService.watchRepository();
   }
 
   void _refreshRepository() {
     setState(() {
-      repositoryFuture = salesService.loadRepository();
+      repositoryStream = salesService.watchRepository();
     });
   }
 
@@ -38,26 +39,50 @@ class _SalesForceHomeState extends State<SalesForceHome> {
     final destinations = const [
       _Destination('Cartera', Icons.assignment_outlined),
       _Destination('Ruta', Icons.map_outlined),
-      _Destination('Cliente', Icons.badge_outlined),
       _Destination('Solicitud', Icons.edit_document),
-      _Destination('Estados', Icons.timeline_outlined),
+      _Destination('Cliente', Icons.badge_outlined),
     ];
     final wide = MediaQuery.sizeOf(context).width >= 860;
 
-    return FutureBuilder<SalesRepository>(
-      future: repositoryFuture,
+    return StreamBuilder<SalesRepository>(
+      stream: repositoryStream,
       builder: (context, snapshot) {
         final repository = snapshot.data;
+        final selectedClient = repository == null
+            ? null
+            : _selectedClientFrom(repository);
         final pages = repository == null
             ? const [Center(child: CircularProgressIndicator())]
             : [
-                PortfolioScreen(repository: repository),
-                RouteScreen(repository: repository),
-                CustomerScreen(repository: repository),
-                ApplicationScreen(repository: repository),
-                RequestsScreen(
+                PortfolioScreen(
                   repository: repository,
                   onRepositoryChanged: _refreshRepository,
+                  onClientSelected: (client) => setState(() {
+                    selectedClientKey = _clientKey(client);
+                  }),
+                ),
+                RouteScreen(
+                  repository: repository,
+                  onClientSelected: (client) => setState(() {
+                    selectedClientKey = _clientKey(client);
+                  }),
+                  onOpenApplication: (client) => setState(() {
+                    selectedClientKey = _clientKey(client);
+                    selectedIndex = 2;
+                  }),
+                ),
+                ApplicationScreen(
+                  repository: repository,
+                  selectedClient: selectedClient,
+                  onSaved: _refreshRepository,
+                ),
+                CustomerScreen(
+                  repository: repository,
+                  onRepositoryChanged: _refreshRepository,
+                  selectedClientKey: selectedClientKey,
+                  onClientSelected: (client) => setState(() {
+                    selectedClientKey = _clientKey(client);
+                  }),
                 ),
               ];
 
@@ -116,6 +141,20 @@ class _SalesForceHomeState extends State<SalesForceHome> {
         );
       },
     );
+  }
+
+  String _clientKey(Client client) {
+    if (client.requestId.isNotEmpty) return client.requestId;
+    if (client.clientId.isNotEmpty) return client.clientId;
+    return client.dni;
+  }
+
+  Client? _selectedClientFrom(SalesRepository repository) {
+    final key = selectedClientKey;
+    if (key == null) return null;
+    return repository.clients
+        .where((client) => _clientKey(client) == key)
+        .firstOrNull;
   }
 }
 

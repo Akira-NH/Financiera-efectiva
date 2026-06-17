@@ -23,11 +23,7 @@ class AppScrollView extends StatelessWidget {
 }
 
 class SectionTitle extends StatelessWidget {
-  const SectionTitle({
-    super.key,
-    required this.title,
-    required this.subtitle,
-  });
+  const SectionTitle({super.key, required this.title, required this.subtitle});
 
   final String title;
   final String subtitle;
@@ -41,16 +37,16 @@ class SectionTitle extends StatelessWidget {
         children: [
           Text(
             title,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 4),
           Text(
             subtitle,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Colors.black54,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: Colors.black54),
           ),
         ],
       ),
@@ -59,7 +55,10 @@ class SectionTitle extends StatelessWidget {
 }
 
 class CompanyLogo extends StatelessWidget {
-  const CompanyLogo({super.key});
+  const CompanyLogo({super.key, this.width = 170, this.height = 48});
+
+  final double width;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
@@ -67,8 +66,8 @@ class CompanyLogo extends StatelessWidget {
       label: 'Logo Financiera Efectiva',
       child: Image.asset(
         'assets/images/logo.png',
-        width: 170,
-        height: 48,
+        width: width,
+        height: height,
         fit: BoxFit.contain,
       ),
     );
@@ -110,9 +109,9 @@ class PanelHeader extends StatelessWidget {
         Expanded(
           child: Text(
             title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
           ),
         ),
       ],
@@ -121,11 +120,7 @@ class PanelHeader extends StatelessWidget {
 }
 
 class StatusPill extends StatelessWidget {
-  const StatusPill({
-    super.key,
-    required this.label,
-    required this.color,
-  });
+  const StatusPill({super.key, required this.label, required this.color});
 
   final String label;
   final Color color;
@@ -162,8 +157,8 @@ class MetricsGrid extends StatelessWidget {
         final itemWidth = constraints.maxWidth > 900
             ? (constraints.maxWidth - 36) / 4
             : constraints.maxWidth > 520
-                ? (constraints.maxWidth - 12) / 2
-                : constraints.maxWidth;
+            ? (constraints.maxWidth - 12) / 2
+            : constraints.maxWidth;
 
         return Wrap(
           spacing: 12,
@@ -186,13 +181,15 @@ class MetricsGrid extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(metric.label, overflow: TextOverflow.ellipsis),
+                              Text(
+                                metric.label,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                               const SizedBox(height: 4),
                               Text(
                                 metric.value,
-                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                      fontWeight: FontWeight.w900,
-                                    ),
+                                style: Theme.of(context).textTheme.titleLarge
+                                    ?.copyWith(fontWeight: FontWeight.w900),
                               ),
                             ],
                           ),

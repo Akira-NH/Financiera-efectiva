@@ -1,16 +1,27 @@
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
+import '../data/models/client.dart';
 import '../data/repositories/sales_repository.dart';
 import '../data/services/credit_scoring_service.dart';
 import '../data/services/field_application_service.dart';
 import '../widgets/app_shell_widgets.dart';
 
 class ApplicationScreen extends StatefulWidget {
-  const ApplicationScreen({super.key, required this.repository});
+  const ApplicationScreen({
+    super.key,
+    required this.repository,
+    required this.selectedClient,
+    required this.onSaved,
+  });
 
   final SalesRepository repository;
+  final Client? selectedClient;
+  final VoidCallback onSaved;
 
   @override
   State<ApplicationScreen> createState() => _ApplicationScreenState();
@@ -26,18 +37,18 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
   final emailController = TextEditingController();
   final businessNameController = TextEditingController();
   final businessAddressController = TextEditingController();
-  final incomeController = TextEditingController(text: '6500');
-  final expensesController = TextEditingController(text: '2800');
-  final amountController = TextEditingController(text: '12000');
-  final termController = TextEditingController(text: '12');
+  final incomeController = TextEditingController();
+  final expensesController = TextEditingController();
+  final amountController = TextEditingController();
+  final termController = TextEditingController();
   final otherPurposeController = TextEditingController();
+  final birthDateController = TextEditingController();
+  final imagePicker = ImagePicker();
 
   int currentStep = 0;
   bool draftSaved = false;
-  bool consentAccepted = false;
-  bool signatureCaptured = false;
-  bool bureauDone = false;
   bool sending = false;
+  XFile? customerPhoto;
   String maritalStatus = 'Soltero';
   String education = 'Secundaria';
   String businessType = 'Comercio';
@@ -48,7 +59,9 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
   CreditScoringResult? lastScoringResult;
   String bureauRating = 'Normal';
   String localApplicationId = '';
-  final readyDocuments = <String>{};
+  String loadedClientKey = '';
+  String saveDiagnostics = 'Sin intentos de guardado aun.';
+  Timer? autosaveTimer;
 
   static const purposes = [
     'Capital de trabajo',
@@ -61,40 +74,9 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
     'Negocio o emprendimiento',
     'Otros',
   ];
-  static const requiredDocuments = [
-    'DNI anverso',
-    'DNI reverso',
-    'Foto del negocio',
-    'Foto del asesor con el cliente',
-  ];
-  static const optionalDocuments = [
-    'RUC',
-    'Recibo de servicios',
-    'Contrato de alquiler',
-    'Otros documentos legales',
-  ];
-
   @override
   void initState() {
     super.initState();
-    final client = widget.repository.clients.firstOrNull;
-    if (client != null) {
-      final parts = client.name.split(' ');
-      namesController.text = parts.take(2).join(' ');
-      lastNamesController.text = parts.skip(2).join(' ');
-      dniController.text = client.dni;
-      phoneController.text = client.phone
-          .replaceAll(RegExp(r'\D'), '')
-          .padRight(9, '0')
-          .substring(0, 9);
-      businessNameController.text = client.businessName;
-      businessAddressController.text = client.location;
-    }
-    _loadDraft();
-  }
-
-  @override
-  void dispose() {
     for (final controller in [
       namesController,
       lastNamesController,
@@ -108,6 +90,42 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
       amountController,
       termController,
       otherPurposeController,
+      birthDateController,
+    ]) {
+      controller.addListener(_scheduleAutosave);
+    }
+    applicationService.syncPendingDraft();
+    _applySelectedClient();
+    if (widget.selectedClient == null) {
+      _loadDraft();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ApplicationScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_clientKey(widget.selectedClient) != _clientKey(oldWidget.selectedClient)) {
+      _applySelectedClient();
+    }
+  }
+
+  @override
+  void dispose() {
+    autosaveTimer?.cancel();
+    for (final controller in [
+      namesController,
+      lastNamesController,
+      dniController,
+      phoneController,
+      emailController,
+      businessNameController,
+      businessAddressController,
+      incomeController,
+      expensesController,
+      amountController,
+      termController,
+      otherPurposeController,
+      birthDateController,
     ]) {
       controller.dispose();
     }
@@ -123,24 +141,38 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
     return amount * monthlyRate * factor / (factor - 1);
   }
 
-  bool get documentsReady =>
-      requiredDocuments.every((document) => readyDocuments.contains(document));
   String get selectedPurpose =>
       purpose == 'Otros' ? otherPurposeController.text.trim() : purpose;
 
   @override
   Widget build(BuildContext context) {
+    final selectedClient = widget.selectedClient;
+    if (selectedClient == null) {
+      return const AppScrollView(
+        children: [
+          SectionTitle(
+            title: 'Solicitud',
+            subtitle:
+                'Seleccione primero un cliente desde Cartera o Ruta para completar su solicitud.',
+          ),
+        ],
+      );
+    }
+
     return AppScrollView(
       children: [
-        const SectionTitle(
-          title: 'Nueva solicitud de credito',
+        SectionTitle(
+          title: 'Solicitud de ${selectedClient.name}',
           subtitle:
-              'Formulario offline-first con documentos, buro y firma digital.',
+              'Ficha de levantamiento asociada a la solicitud ${selectedClient.requestId.isEmpty ? selectedClient.dni : selectedClient.requestId}.',
         ),
+        _SaveDiagnosticsCard(message: saveDiagnostics),
+        const SizedBox(height: 12),
         Form(
           key: formKey,
           child: Stepper(
             currentStep: currentStep,
+            physics: const NeverScrollableScrollPhysics(),
             onStepTapped: (step) => setState(() => currentStep = step),
             controlsBuilder: (context, details) {
               return Padding(
@@ -154,17 +186,12 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
                           ? _sendToCommittee
                           : details.onStepContinue,
                       child: Text(
-                        currentStep == 3 ? 'Enviar al comite' : 'Continuar',
+                        currentStep == 3 ? 'Guardar' : 'Continuar',
                       ),
                     ),
                     OutlinedButton(
                       onPressed: currentStep == 0 ? null : details.onStepCancel,
                       child: const Text('Atras'),
-                    ),
-                    TextButton.icon(
-                      onPressed: _saveDraft,
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text('Guardar borrador'),
                     ),
                   ],
                 ),
@@ -186,12 +213,17 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
                   dniController: dniController,
                   phoneController: phoneController,
                   emailController: emailController,
+                  birthDateController: birthDateController,
                   maritalStatus: maritalStatus,
                   education: education,
-                  onMaritalChanged: (value) =>
-                      setState(() => maritalStatus = value!),
-                  onEducationChanged: (value) =>
-                      setState(() => education = value!),
+                  onMaritalChanged: (value) {
+                    setState(() => maritalStatus = value!);
+                    _scheduleAutosave();
+                  },
+                  onEducationChanged: (value) {
+                    setState(() => education = value!);
+                    _scheduleAutosave();
+                  },
                 ),
               ),
               Step(
@@ -203,8 +235,10 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
                   incomeController: incomeController,
                   expensesController: expensesController,
                   businessType: businessType,
-                  onBusinessTypeChanged: (value) =>
-                      setState(() => businessType = value!),
+                  onBusinessTypeChanged: (value) {
+                    setState(() => businessType = value!);
+                    _scheduleAutosave();
+                  },
                 ),
               ),
               Step(
@@ -221,13 +255,22 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
                   estimatedInstallment: estimatedInstallment,
                   totalToPay: estimatedInstallment * term,
                   onChanged: () => setState(() {}),
-                  onCurrencyChanged: (value) =>
-                      setState(() => currency = value!),
-                  onInstallmentChanged: (value) =>
-                      setState(() => installmentType = value!),
-                  onGuaranteeChanged: (value) =>
-                      setState(() => guarantee = value!),
-                  onPurposeChanged: (value) => setState(() => purpose = value!),
+                  onCurrencyChanged: (value) {
+                    setState(() => currency = value!);
+                    _scheduleAutosave();
+                  },
+                  onInstallmentChanged: (value) {
+                    setState(() => installmentType = value!);
+                    _scheduleAutosave();
+                  },
+                  onGuaranteeChanged: (value) {
+                    setState(() => guarantee = value!);
+                    _scheduleAutosave();
+                  },
+                  onPurposeChanged: (value) {
+                    setState(() => purpose = value!);
+                    _scheduleAutosave();
+                  },
                 ),
               ),
               Step(
@@ -237,21 +280,9 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
                   amount: amount,
                   term: term,
                   purpose: selectedPurpose,
-                  documentsReady: documentsReady,
-                  bureauDone: bureauDone,
                   draftSaved: draftSaved,
-                  consentAccepted: consentAccepted,
-                  signatureCaptured: signatureCaptured,
-                  sending: sending,
-                  requiredDocuments: requiredDocuments,
-                  optionalDocuments: optionalDocuments,
-                  readyDocuments: readyDocuments,
-                  bureauRating: bureauRating,
-                  onToggleDocument: _toggleDocument,
-                  onRunBureau: _runBureau,
-                  onConsentChanged: (value) =>
-                      setState(() => consentAccepted = value ?? false),
-                  onSignature: () => setState(() => signatureCaptured = true),
+                  customerPhoto: customerPhoto,
+                  onTakePhoto: _takeCustomerPhoto,
                 ),
               ),
             ],
@@ -259,16 +290,6 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
         ),
       ],
     );
-  }
-
-  void _toggleDocument(String document) {
-    setState(() {
-      if (readyDocuments.contains(document)) {
-        readyDocuments.remove(document);
-      } else {
-        readyDocuments.add(document);
-      }
-    });
   }
 
   Future<void> _loadDraft() async {
@@ -304,49 +325,27 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
       purpose = draft['purpose'] as String? ?? purpose;
       localApplicationId = draft['localId'] as String? ?? localApplicationId;
       bureauRating = draft['bureauRating'] as String? ?? bureauRating;
-      consentAccepted = draft['consentAccepted'] as bool? ?? consentAccepted;
-      signatureCaptured =
-          draft['signatureCaptured'] as bool? ?? signatureCaptured;
-      bureauDone = draft['bureauDone'] as bool? ?? bureauDone;
-      final documents = draft['readyDocuments'];
-      if (documents is List) {
-        readyDocuments
-          ..clear()
-          ..addAll(documents.whereType<String>());
-      }
       draftSaved = true;
     });
   }
 
-  Future<void> _saveDraft() async {
+  Future<void> _saveDraft({bool silent = false}) async {
+    if (widget.selectedClient == null) return;
     await applicationService.saveDraft(_buildPayload(status: 'borrador'));
     if (!mounted) return;
     setState(() => draftSaved = true);
+    if (silent) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Borrador guardado localmente.')),
     );
   }
 
-  void _runBureau() {
-    final dni = dniController.text.trim();
-    if (dni.length != 8) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ingresa DNI valido antes de consultar buro.'),
-        ),
-      );
-      return;
-    }
-    final lastDigit = int.tryParse(dni.characters.last) ?? 0;
-    setState(() {
-      bureauRating = switch (lastDigit % 5) {
-        0 => 'Normal',
-        1 => 'CPP',
-        2 => 'Deficiente',
-        3 => 'Dudoso',
-        _ => 'Perdida',
-      };
-      bureauDone = true;
+  void _scheduleAutosave() {
+    if (widget.selectedClient == null) return;
+    autosaveTimer?.cancel();
+    autosaveTimer = Timer(const Duration(milliseconds: 700), () {
+      if (!mounted) return;
+      _saveDraft(silent: true);
     });
   }
 
@@ -356,44 +355,51 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
       setState(() => currentStep = 2);
       return;
     }
-    if (!signatureCaptured ||
-        !consentAccepted ||
-        !documentsReady ||
-        !bureauDone) {
+    if (customerPhoto == null) {
+      setState(() => currentStep = 3);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Completa firma, consentimiento, documentos y buro.'),
-        ),
+        const SnackBar(content: Text('Captura la fotografia del DNI.')),
       );
       return;
     }
 
     setState(() => sending = true);
+    final payload = _buildPayload(status: 'Pendiente', scoring: _evaluateScoring());
+    final targetError = _validatePersistenceTarget(payload);
+    if (targetError != null) {
+      setState(() {
+        sending = false;
+        saveDiagnostics = targetError;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(targetError)),
+      );
+      return;
+    }
+    setState(() => saveDiagnostics = _diagnosticsBeforeSave(payload));
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) => const _TransmissionProgressDialog(),
     );
     if (!mounted) return;
-    final scoring = _evaluateScoring();
-    final requestStatus = switch (scoring.estadoEvaluacion) {
-      'Aprobado' => 'Aprobado',
-      'Rechazado' => 'Rechazado',
-      _ => 'En comite',
-    };
-    final expedient = await applicationService.submitToCommittee(
-      _buildPayload(status: requestStatus, scoring: scoring),
+    final result = await applicationService.submitToCommittee(
+      payload,
     );
     if (!mounted) return;
     setState(() {
       sending = false;
       draftSaved = false;
-      lastScoringResult = scoring;
+      lastScoringResult = _evaluateScoring();
+      saveDiagnostics = _diagnosticsAfterSave(payload, result);
     });
+    if (result.synced) widget.onSaved();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Solicitud evaluada: ${scoring.estadoEvaluacion}. Expediente $expedient.',
+          result.synced
+              ? 'Solicitud guardada y sincronizada. Expediente ${result.expedientNumber}.'
+              : 'Solicitud guardada localmente. Se sincronizara al recuperar conexion.',
         ),
       ),
     );
@@ -404,30 +410,26 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
     CreditScoringResult? scoring,
   }) {
     final localId = _ensureLocalApplicationId();
+    final isFinalSave = status != 'borrador';
     final scoringResult = scoring ?? lastScoringResult ?? _evaluateScoring();
     final documents = [
-      for (final document in requiredDocuments)
+      if (customerPhoto != null)
         {
-          'type': document,
+          'type': 'DNI cliente',
           'required': true,
-          'status': readyDocuments.contains(document) ? 'LISTO' : 'OBLIGATORIO',
-          'storageUrl': readyDocuments.contains(document)
-              ? 'local://prototype/${Uri.encodeComponent(document)}'
-              : '',
-        },
-      for (final document in optionalDocuments)
-        {
-          'type': document,
-          'required': false,
-          'status': readyDocuments.contains(document) ? 'LISTO' : 'PENDIENTE',
-          'storageUrl': readyDocuments.contains(document)
-              ? 'local://prototype/${Uri.encodeComponent(document)}'
-              : '',
+          'status': 'LISTO',
+          'localPath': customerPhoto!.path,
         },
     ];
 
     return {
       'localId': localId,
+      'requestId': localId,
+      'id_solicitud': localId,
+      'clientId':
+          widget.selectedClient?.clientId.isNotEmpty == true
+              ? widget.selectedClient!.clientId
+              : dniController.text.trim(),
       'cliente':
           '${namesController.text.trim()} ${lastNamesController.text.trim()}'
               .trim(),
@@ -438,17 +440,24 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
       'lastNames': lastNamesController.text.trim(),
       'dni': dniController.text.trim(),
       'phone': phoneController.text.trim(),
+      'telefono': phoneController.text.trim(),
       'email': emailController.text.trim(),
+      'correo': emailController.text.trim(),
+      'birthDate': birthDateController.text.trim(),
       'maritalStatus': maritalStatus,
       'education': education,
       'businessType': businessType,
       'businessName': businessNameController.text.trim(),
       'businessAddress': businessAddressController.text.trim(),
+      'negocio': businessNameController.text.trim(),
+      'rubro': businessType,
+      'ubicacion': businessAddressController.text.trim(),
       'monthlyIncome': num.tryParse(incomeController.text) ?? 0,
       'monthlyExpenses': num.tryParse(expensesController.text) ?? 0,
       'ingresos_mensuales': num.tryParse(incomeController.text) ?? 0,
       'gastos_mensuales': num.tryParse(expensesController.text) ?? 0,
       'amount': amount,
+      'monto_solicitado': amount,
       'monto': 'S/ ${amount.toStringAsFixed(2)}',
       'amountLabel': 'S/ ${amount.toStringAsFixed(2)}',
       'termMonths': term,
@@ -466,20 +475,81 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
           : '',
       'estado': status,
       'status': status,
+      'estado_solicitud': status,
+      'fieldVisitCompleted': isFinalSave,
+      'solicitud_completada': isFinalSave,
+      'estado_cliente': isFinalSave
+          ? 'Visitado'
+          : (widget.selectedClient?.clientStatus ?? 'Visitar'),
       'segmento': scoringResult.nivelRiesgo,
-      'bureauDone': bureauDone,
+      'bureauDone': false,
       'bureauRating': bureauRating,
       'bureauResult': _bureauResult,
       'bureauRecommendation': _bureauRecommendation,
       'cuotas_mensuales_actuales': _currentInstallmentsForScoring(),
       'deuda_actual_scoring': _debtForScoring(),
-      'consentAccepted': consentAccepted,
-      'signatureCaptured': signatureCaptured,
-      'readyDocuments': readyDocuments.toList(),
       'documents': documents,
+      'customerPhotoPath': customerPhoto?.path ?? '',
+      'dniPhotoPath': customerPhoto?.path ?? '',
       'syncStatus': 'pending',
       ...scoringResult.toJson(),
     };
+  }
+
+  String? _validatePersistenceTarget(Map<String, Object?> payload) {
+    final requestId = payload['requestId'] as String? ?? '';
+    final clientId = payload['clientId'] as String? ?? '';
+    final dni = payload['dni'] as String? ?? '';
+    if (widget.selectedClient == null) {
+      return 'Error: no hay cliente seleccionado para asociar la solicitud.';
+    }
+    if (requestId.isEmpty) {
+      return 'Error: solicitudId vacio. Abre Solicitud desde Ruta > Ver ficha completa.';
+    }
+    if (clientId.isEmpty) {
+      return 'Error: clienteId vacio. No se puede actualizar clients/{clienteId}.';
+    }
+    if (dni.isEmpty || dni.length != 8) {
+      return 'Error: DNI invalido o vacio. Verifica datos del solicitante.';
+    }
+    return null;
+  }
+
+  String _diagnosticsBeforeSave(Map<String, Object?> payload) {
+    final requestId = payload['requestId'] as String? ?? '';
+    final clientId = payload['clientId'] as String? ?? '';
+    final dni = payload['dni'] as String? ?? '';
+    return 'Guardando...\n'
+        'solicitudId: $requestId\n'
+        'clienteId: $clientId\n'
+        'DNI: $dni\n'
+        'Rutas Firestore:\n'
+        '- sales_credit_requests/$requestId\n'
+        '- clients/$clientId/creditRequests/$requestId\n'
+        '- sales_clients/$dni';
+  }
+
+  String _diagnosticsAfterSave(
+    Map<String, Object?> payload,
+    FieldSaveResult result,
+  ) {
+    final base = _diagnosticsBeforeSave(payload);
+    if (result.synced) {
+      return '$base\nResultado: sincronizado correctamente en Firestore.';
+    }
+    return '$base\nResultado: guardado local, no sincronizado.\n'
+        'Error Firestore: ${result.errorMessage}';
+  }
+
+  Future<void> _takeCustomerPhoto() async {
+    final photo = await imagePicker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 78,
+      maxWidth: 1280,
+    );
+    if (photo == null || !mounted) return;
+    setState(() => customerPhoto = photo);
+    _scheduleAutosave();
   }
 
   num _currentInstallmentsForScoring() {
@@ -531,12 +601,61 @@ class _ApplicationScreenState extends State<ApplicationScreen> {
       montoSolicitado: amount,
       plazoMeses: term,
       antiguedadLaboralMeses: 24,
-      historialPagos: bureauDone ? 'con historial' : 'sin historial',
+      historialPagos: 'sin historial',
     );
     return const CreditScoringService().evaluate(input);
   }
 
+  void _applySelectedClient() {
+    final client = widget.selectedClient;
+    final key = _clientKey(client);
+    if (client == null || key.isEmpty || key == loadedClientKey) return;
+    final parts = client.name.trim().split(RegExp(r'\s+'));
+    final firstNames = parts.length <= 2
+        ? client.name.trim()
+        : parts.take(2).join(' ');
+    final lastNames = parts.length <= 2 ? '' : parts.skip(2).join(' ');
+    loadedClientKey = key;
+    localApplicationId = client.requestId.isNotEmpty
+        ? client.requestId
+        : (client.clientId.isNotEmpty ? client.clientId : client.dni);
+    namesController.text = firstNames;
+    lastNamesController.text = lastNames;
+    dniController.text = client.dni;
+    phoneController.text = client.phone;
+    businessNameController.text = client.businessName == 'Solicitud nueva'
+        ? ''
+        : client.businessName;
+    businessAddressController.text = client.location;
+    amountController.text = client.requestAmount > 0
+        ? client.requestAmount.toStringAsFixed(0)
+        : amountController.text;
+    termController.text = client.termMonths > 0
+        ? client.termMonths.toString()
+        : termController.text;
+    if (purposes.contains(client.creditPurpose)) {
+      purpose = client.creditPurpose;
+      otherPurposeController.clear();
+    } else if (client.creditPurpose.isNotEmpty) {
+      purpose = 'Otros';
+      otherPurposeController.text = client.creditPurpose;
+    }
+    setState(() {});
+  }
+
+  String _clientKey(Client? client) {
+    if (client == null) return '';
+    if (client.requestId.isNotEmpty) return client.requestId;
+    if (client.clientId.isNotEmpty) return client.clientId;
+    return client.dni;
+  }
+
   String _ensureLocalApplicationId() {
+    final selectedId = widget.selectedClient?.requestId ?? '';
+    if (selectedId.isNotEmpty) {
+      localApplicationId = selectedId;
+      return localApplicationId;
+    }
     if (localApplicationId.isNotEmpty) return localApplicationId;
     final dni = dniController.text.trim();
     localApplicationId =
@@ -568,6 +687,7 @@ class _ApplicantStep extends StatelessWidget {
     required this.dniController,
     required this.phoneController,
     required this.emailController,
+    required this.birthDateController,
     required this.maritalStatus,
     required this.education,
     required this.onMaritalChanged,
@@ -579,6 +699,7 @@ class _ApplicantStep extends StatelessWidget {
   final TextEditingController dniController;
   final TextEditingController phoneController;
   final TextEditingController emailController;
+  final TextEditingController birthDateController;
   final String maritalStatus;
   final String education;
   final ValueChanged<String?> onMaritalChanged;
@@ -590,8 +711,14 @@ class _ApplicantStep extends StatelessWidget {
       children: [
         _TextInput('Nombres', namesController, required: true),
         _TextInput('Apellidos', lastNamesController, required: true),
-        _TextInput('DNI', dniController, required: true, exactLength: 8),
-        const _DatePlaceholder(),
+        _TextInput(
+          'DNI',
+          dniController,
+          required: true,
+          exactLength: 8,
+          numeric: true,
+        ),
+        _DatePlaceholder(controller: birthDateController),
         _DropdownInput(
           label: 'Estado civil',
           value: maritalStatus,
@@ -604,7 +731,13 @@ class _ApplicantStep extends StatelessWidget {
           values: const ['Primaria', 'Secundaria', 'Tecnica', 'Universitaria'],
           onChanged: onEducationChanged,
         ),
-        _TextInput('Telefono', phoneController, required: true, exactLength: 9),
+        _TextInput(
+          'Telefono',
+          phoneController,
+          required: true,
+          exactLength: 9,
+          numeric: true,
+        ),
         _TextInput('Correo opcional', emailController),
       ],
     );
@@ -644,7 +777,7 @@ class _BusinessStep extends StatelessWidget {
           required: true,
         ),
         _TextInput('Direccion', businessAddressController, required: true),
-        const _TextInput.stateless('Antiguedad', 'Ej. 3 anos y 4 meses'),
+        const _TextInput.stateless('Antiguedad', null),
         _TextInput(
           'Ingresos mensuales',
           incomeController,
@@ -657,11 +790,8 @@ class _BusinessStep extends StatelessWidget {
           required: true,
           numeric: true,
         ),
-        const _TextInput.stateless('Patrimonio estimado', 'Opcional'),
-        const _TextInput.stateless(
-          'Actividad economica',
-          'Venta minorista, servicios, etc.',
-        ),
+        const _TextInput.stateless('Patrimonio estimado', null),
+        const _TextInput.stateless('Actividad economica', null),
       ],
     );
   }
@@ -782,49 +912,20 @@ class _ConfirmationStep extends StatelessWidget {
     required this.amount,
     required this.term,
     required this.purpose,
-    required this.documentsReady,
-    required this.bureauDone,
     required this.draftSaved,
-    required this.consentAccepted,
-    required this.signatureCaptured,
-    required this.sending,
-    required this.requiredDocuments,
-    required this.optionalDocuments,
-    required this.readyDocuments,
-    required this.bureauRating,
-    required this.onToggleDocument,
-    required this.onRunBureau,
-    required this.onConsentChanged,
-    required this.onSignature,
+    required this.customerPhoto,
+    required this.onTakePhoto,
   });
 
   final num amount;
   final int term;
   final String purpose;
-  final bool documentsReady;
-  final bool bureauDone;
   final bool draftSaved;
-  final bool consentAccepted;
-  final bool signatureCaptured;
-  final bool sending;
-  final List<String> requiredDocuments;
-  final List<String> optionalDocuments;
-  final Set<String> readyDocuments;
-  final String bureauRating;
-  final ValueChanged<String> onToggleDocument;
-  final VoidCallback onRunBureau;
-  final ValueChanged<bool?> onConsentChanged;
-  final VoidCallback onSignature;
+  final XFile? customerPhoto;
+  final VoidCallback onTakePhoto;
 
   @override
   Widget build(BuildContext context) {
-    final bureauColor = switch (bureauRating) {
-      'Normal' => Colors.green,
-      'CPP' => Colors.amber,
-      'Deficiente' => Colors.orange,
-      'Dudoso' => Colors.red,
-      _ => Colors.grey.shade800,
-    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -840,77 +941,49 @@ class _ConfirmationStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         const PanelHeader(
-          'Documentos de la solicitud',
-          Icons.folder_copy_outlined,
-        ),
-        const SizedBox(height: 8),
-        for (final document in requiredDocuments)
-          _DocumentTile(
-            label: document,
-            requiredDocument: true,
-            ready: readyDocuments.contains(document),
-            onTap: () => onToggleDocument(document),
-          ),
-        for (final document in optionalDocuments)
-          _DocumentTile(
-            label: document,
-            requiredDocument: false,
-            ready: readyDocuments.contains(document),
-            onTap: () => onToggleDocument(document),
-          ),
-        const SizedBox(height: 12),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: CircleAvatar(
-            backgroundColor: bureauColor.withValues(alpha: .15),
-            child: Icon(Icons.shield_outlined, color: bureauColor),
-          ),
-          title: Text(
-            'Consulta de buro: ${bureauDone ? bureauRating : 'Pendiente'}',
-          ),
-          subtitle: Text(
-            bureauDone
-                ? 'Entidades: 2 | deuda total S/ 14,200 | resultado automatico generado'
-                : 'Requiere consentimiento y firma antes del envio.',
-          ),
-          trailing: OutlinedButton(
-            onPressed: onRunBureau,
-            child: const Text('Consultar'),
-          ),
-        ),
-        CheckboxListTile(
-          contentPadding: EdgeInsets.zero,
-          value: consentAccepted,
-          onChanged: onConsentChanged,
-          title: const Text('El cliente declara que los datos son veraces'),
-        ),
-        GestureDetector(
-          onTap: onSignature,
-          child: Container(
-            height: 112,
-            width: double.infinity,
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: signatureCaptured ? Colors.green : Colors.black26,
-              ),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              signatureCaptured
-                  ? 'Firma digital capturada'
-                  : 'Toca aqui para capturar firma',
-            ),
-          ),
+          'Captura de documento',
+          Icons.camera_alt_outlined,
         ),
         const SizedBox(height: 12),
-        StatusPill(
-          label: documentsReady
-              ? 'Documentos obligatorios listos'
-              : 'Faltan documentos obligatorios',
-          color: documentsReady ? Colors.green : Colors.red,
+        _PhotoCaptureTile(
+          photo: customerPhoto,
+          onTakePhoto: onTakePhoto,
+          label: 'Fotografia del DNI',
+          emptyLabel: 'Pendiente de captura',
+          readyLabel: 'DNI capturado',
+          icon: Icons.badge_outlined,
         ),
       ],
+    );
+  }
+}
+
+class _SaveDiagnosticsCard extends StatelessWidget {
+  const _SaveDiagnosticsCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final isError = message.contains('Error') || message.contains('no sincronizado');
+    final color = isError ? Colors.orange : Colors.blueGrey;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.info_outline, color: color),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1018,14 +1091,55 @@ class _DropdownInput extends StatelessWidget {
 }
 
 class _DatePlaceholder extends StatelessWidget {
-  const _DatePlaceholder();
+  const _DatePlaceholder({required this.controller});
+
+  final TextEditingController controller;
 
   @override
   Widget build(BuildContext context) {
     return TextFormField(
-      decoration: const InputDecoration(labelText: 'Fecha de nacimiento'),
-      validator: (value) =>
-          value == null || value.trim().isEmpty ? 'Campo obligatorio' : null,
+      controller: controller,
+      readOnly: true,
+      decoration: const InputDecoration(
+        labelText: 'Fecha de nacimiento',
+        suffixIcon: Icon(Icons.calendar_month_outlined),
+      ),
+      onTap: () async {
+        final now = DateTime.now();
+        final selected = await showDatePicker(
+          context: context,
+          initialDate: DateTime(now.year - 25, now.month, now.day),
+          firstDate: DateTime(now.year - 90),
+          lastDate: now,
+        );
+        if (selected == null) return;
+        controller.text =
+            '${selected.day.toString().padLeft(2, '0')}/'
+            '${selected.month.toString().padLeft(2, '0')}/${selected.year}';
+      },
+      validator: (value) {
+        final text = value?.trim() ?? '';
+        if (text.isEmpty) return 'Campo obligatorio';
+        final parts = text.split('/');
+        if (parts.length != 3) return 'Fecha invalida';
+        final day = int.tryParse(parts[0]);
+        final month = int.tryParse(parts[1]);
+        final year = int.tryParse(parts[2]);
+        if (day == null || month == null || year == null) {
+          return 'Fecha invalida';
+        }
+        final birthDate = DateTime(year, month, day);
+        final now = DateTime.now();
+        if (birthDate.isAfter(now)) return 'No puede ser futura';
+        final age =
+            now.year -
+            birthDate.year -
+            (DateTime(now.year, birthDate.month, birthDate.day).isAfter(now)
+                ? 1
+                : 0);
+        if (age < 18) return 'Debe ser mayor de edad';
+        return null;
+      },
     );
   }
 }
@@ -1045,45 +1159,93 @@ class _SimulationChip extends StatelessWidget {
   }
 }
 
-class _DocumentTile extends StatelessWidget {
-  const _DocumentTile({
-    required this.label,
-    required this.requiredDocument,
-    required this.ready,
-    required this.onTap,
+class _PhotoCaptureTile extends StatelessWidget {
+  const _PhotoCaptureTile({
+    required this.photo,
+    required this.onTakePhoto,
+    this.label = 'Fotografia del cliente',
+    this.emptyLabel = 'Pendiente de captura',
+    this.readyLabel = 'Fotografia capturada',
+    this.icon = Icons.person_add_alt_1,
   });
 
+  final XFile? photo;
+  final VoidCallback onTakePhoto;
   final String label;
-  final bool requiredDocument;
-  final bool ready;
-  final VoidCallback onTap;
+  final String emptyLabel;
+  final String readyLabel;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        ready ? Icons.check_circle : Icons.radio_button_unchecked,
-        color: ready ? Colors.green : Colors.orange,
-      ),
-      title: Text(label),
-      subtitle: Text(requiredDocument ? 'OBLIGATORIO' : 'Opcional'),
-      trailing: Wrap(
-        spacing: 4,
-        children: [
-          IconButton(
-            tooltip: ready ? 'Eliminar' : 'Tomar foto',
-            onPressed: onTap,
-            icon: Icon(
-              ready ? Icons.delete_outline : Icons.camera_alt_outlined,
-            ),
-          ),
-          IconButton(
-            tooltip: 'Previsualizar',
-            onPressed: ready ? () {} : null,
-            icon: const Icon(Icons.visibility_outlined),
-          ),
-        ],
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 420;
+            final preview = ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                width: compact ? double.infinity : 96,
+                height: compact ? 180 : 96,
+                child: photo == null
+                    ? ColoredBox(
+                        color: const Color(0xFFE9ECFF),
+                        child: Icon(
+                          icon,
+                          color: Theme.of(context).colorScheme.primary,
+                          size: 34,
+                        ),
+                      )
+                    : Image.file(File(photo!.path), fit: BoxFit.cover),
+              ),
+            );
+            final details = Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: compact
+                  ? CrossAxisAlignment.stretch
+                  : CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                Text(photo == null ? emptyLabel : readyLabel),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: compact
+                      ? Alignment.centerLeft
+                      : Alignment.centerRight,
+                  child: OutlinedButton.icon(
+                    onPressed: onTakePhoto,
+                    icon: const Icon(Icons.camera_alt_outlined),
+                    label: Text(photo == null ? 'Tomar foto' : 'Retomar'),
+                  ),
+                ),
+              ],
+            );
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  preview,
+                  const SizedBox(height: 12),
+                  details,
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                preview,
+                const SizedBox(width: 12),
+                Expanded(child: details),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -1127,7 +1289,7 @@ class _TransmissionProgressDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Enviar al comite'),
+      title: const Text('Guardar solicitud'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

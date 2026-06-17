@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import '../../features/credits/domain/entities/installment.dart';
+import '../../features/credits/domain/entities/credit_request_status.dart';
 import '../../features/credits/domain/entities/loan.dart';
 import '../../features/dashboard/data/dashboard_mock_data.dart';
 import '../../features/dashboard/domain/entities/financial_summary.dart';
@@ -17,6 +18,13 @@ import '../../features/savings/domain/entities/savings_account.dart';
 import '../errors/app_exception.dart';
 import 'client_database_service.dart';
 import 'firebase_auth_service.dart';
+
+class _OperationHistoryRow {
+  const _OperationHistoryRow({required this.item, this.createdAt});
+
+  final OperationHistoryItem item;
+  final Timestamp? createdAt;
+}
 
 class FinancialFirestoreService {
   FinancialFirestoreService._();
@@ -554,10 +562,70 @@ class FinancialFirestoreService {
     }).toList();
   }
 
+  Stream<List<CreditRequestStatus>> watchCreditRequestStatuses() async* {
+    final firestore = _firestore;
+    if (firestore == null) {
+      yield const [];
+      return;
+    }
+
+    await ensureClientFinancialProfile();
+
+    yield* firestore
+        .collection('clients')
+        .doc(_clientId)
+        .collection('creditRequests')
+        .orderBy('updatedAt', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+        final rawStatus =
+            data['estado_solicitud'] as String? ??
+            data['estado'] as String? ??
+            data['status'] as String? ??
+            'Pendiente';
+        final rawAmount = data['amount'];
+        final updatedAt = data['updatedAt'];
+        return CreditRequestStatus(
+          id: data['id'] as String? ?? doc.id,
+          amount: rawAmount is num ? rawAmount : 0,
+          termMonths:
+              data['termMonths'] as int? ??
+              data['plazo_meses'] as int? ??
+              0,
+          purpose:
+              data['purpose'] as String? ??
+              data['destino_credito'] as String? ??
+              'No registrado',
+          status: _normalizeCreditRequestStatus(rawStatus),
+          updatedAtLabel: updatedAt is Timestamp
+              ? _formatDate(updatedAt.toDate())
+              : 'Sin fecha',
+        );
+      }).toList();
+    });
+  }
+
+  String _normalizeCreditRequestStatus(String status) {
+    final value = status.trim().toLowerCase();
+    if (value == 'aceptado' || value == 'aprobado') return 'Aceptado';
+    if (value == 'negado' || value == 'rechazado') return 'Negado';
+    return 'Pendiente de evaluacion';
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/${date.year}';
+  }
+
   Future<void> submitCreditRequest({
     required num amount,
     required int termMonths,
     required String purpose,
+    double? latitude,
+    double? longitude,
+    String? locationLabel,
   }) async {
     final firestore = _firestore;
     if (amount <= 0) {
@@ -614,6 +682,9 @@ class FinancialFirestoreService {
       'amountLabel': amountLabel,
       'termMonths': termMonths,
       'purpose': cleanPurpose,
+      'latitud': latitude,
+      'longitud': longitude,
+      'ubicacion': locationLabel ?? (clientData['location'] as String? ?? ''),
       'status': 'Preaprobado',
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
@@ -630,6 +701,9 @@ class FinancialFirestoreService {
       'correo': email,
       'plazo_meses': termMonths,
       'destino_credito': cleanPurpose,
+      'latitud': latitude,
+      'longitud': longitude,
+      'ubicacion': locationLabel ?? (clientData['location'] as String? ?? ''),
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -638,6 +712,8 @@ class FinancialFirestoreService {
       'nombres': fullName,
       'telefono': phone,
       'ubicacion': clientData['location'] as String? ?? '',
+      'latitud': latitude,
+      'longitud': longitude,
       'edad': clientData['age'] as int? ?? 0,
       'negocio': clientData['businessName'] as String? ?? 'Por registrar',
       'rubro': clientData['businessType'] as String? ?? 'Por evaluar',
@@ -679,6 +755,75 @@ class FinancialFirestoreService {
         status: data['status'] as String? ?? 'Exitosa',
       );
     }).toList();
+  }
+
+  Future<List<OperationHistoryItem>> getOperationHistory() async {
+    final firestore = _firestore;
+    if (firestore == null) return OperationsMockData.history;
+
+    await ensureClientFinancialProfile();
+    final clientRef = firestore.collection('clients').doc(_clientId);
+    final operationsSnapshot = await clientRef
+        .collection('operations')
+        .orderBy('createdAt', descending: true)
+        .get();
+    final operationServiceIds = <String>{};
+    final history = <_OperationHistoryRow>[];
+
+    for (final doc in operationsSnapshot.docs) {
+      final data = doc.data();
+      final serviceId = data['serviceId'] as String?;
+      if (serviceId != null && serviceId.isNotEmpty) {
+        operationServiceIds.add(serviceId);
+      }
+      history.add(
+        _OperationHistoryRow(
+          item: OperationHistoryItem(
+            type: data['type'] as String? ?? 'OperaciÃ³n',
+            date: data['date'] as String? ?? '',
+            amount: data['amount'] as num? ?? 0,
+            status: data['status'] as String? ?? 'Exitosa',
+          ),
+          createdAt: data['createdAt'] as Timestamp?,
+        ),
+      );
+    }
+
+    final movementsSnapshot = await clientRef
+        .collection('movements')
+        .orderBy('createdAt', descending: true)
+        .get();
+
+    for (final doc in movementsSnapshot.docs) {
+      final data = doc.data();
+      final title = data['title'] as String? ?? '';
+      final serviceId = data['serviceId'] as String?;
+      final hasOperation =
+          serviceId != null && operationServiceIds.contains(serviceId);
+      if (!title.startsWith('Pago') || hasOperation) continue;
+      history.add(
+        _OperationHistoryRow(
+          item: OperationHistoryItem(
+            type: title,
+            date: data['date'] as String? ?? '',
+            amount: data['amount'] as num? ?? 0,
+            status: data['status'] as String? ?? 'Exitosa',
+          ),
+          createdAt: data['createdAt'] as Timestamp?,
+        ),
+      );
+    }
+
+    history.sort((a, b) {
+      final aDate = a.createdAt?.toDate();
+      final bDate = b.createdAt?.toDate();
+      if (aDate == null && bDate == null) return 0;
+      if (aDate == null) return 1;
+      if (bDate == null) return -1;
+      return bDate.compareTo(aDate);
+    });
+
+    return history.map((row) => row.item).toList();
   }
 
   List<ServiceBill> _defaultServiceBills() {

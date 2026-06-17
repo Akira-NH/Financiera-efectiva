@@ -23,6 +23,16 @@ class DemoScoringClient {
     required this.destinoCredito,
     required this.destinoCreditoOtro,
     required this.antiguedadLaboralMeses,
+    required this.direccion,
+    required this.latitud,
+    required this.longitud,
+    required this.estadoCliente,
+    required this.estadoSolicitud,
+    required this.score,
+    required this.nivelRiesgo,
+    required this.capacidadPagoDisponible,
+    required this.ratioEndeudamiento,
+    required this.recomendacionScoring,
   });
 
   final String idCliente;
@@ -48,6 +58,16 @@ class DemoScoringClient {
   final String destinoCredito;
   final String destinoCreditoOtro;
   final int antiguedadLaboralMeses;
+  final String direccion;
+  final double latitud;
+  final double longitud;
+  final String estadoCliente;
+  final String estadoSolicitud;
+  final int score;
+  final String nivelRiesgo;
+  final num capacidadPagoDisponible;
+  final num ratioEndeudamiento;
+  final String recomendacionScoring;
 
   String get nombreCompleto => '$nombres $apellidos'.trim();
 
@@ -78,6 +98,16 @@ class DemoScoringClient {
       destinoCreditoOtro: json['destino_credito_otro'] as String? ?? '',
       antiguedadLaboralMeses:
           (json['antiguedad_laboral_meses'] as num?)?.round() ?? 0,
+      direccion: json['direccion'] as String? ?? 'Huancayo, Peru',
+      latitud: (json['latitud'] as num?)?.toDouble() ?? -12.0651,
+      longitud: (json['longitud'] as num?)?.toDouble() ?? -75.2049,
+      estadoCliente: json['estado_cliente'] as String? ?? 'Visitar',
+      estadoSolicitud: json['estado_solicitud'] as String? ?? 'Negado',
+      score: (json['score'] as num?)?.round() ?? 0,
+      nivelRiesgo: json['nivel_riesgo'] as String? ?? '',
+      capacidadPagoDisponible: json['capacidad_pago_disponible'] as num? ?? 0,
+      ratioEndeudamiento: json['ratio_endeudamiento'] as num? ?? 0,
+      recomendacionScoring: json['recomendacion_scoring'] as String? ?? '',
     );
   }
 
@@ -106,6 +136,16 @@ class DemoScoringClient {
       'destino_credito': destinoCredito,
       'destino_credito_otro': destinoCreditoOtro,
       'antiguedad_laboral_meses': antiguedadLaboralMeses,
+      'direccion': direccion,
+      'latitud': latitud,
+      'longitud': longitud,
+      'estado_cliente': estadoCliente,
+      'estado_solicitud': estadoSolicitud,
+      'score': score,
+      'nivel_riesgo': nivelRiesgo,
+      'capacidad_pago_disponible': capacidadPagoDisponible,
+      'ratio_endeudamiento': ratioEndeudamiento,
+      'recomendacion_scoring': recomendacionScoring,
     };
   }
 }

@@ -26,7 +26,7 @@ class _OperationHistoryScreenState extends State<OperationHistoryScreen> {
   @override
   void initState() {
     super.initState();
-    _historyFuture = FinancialFirestoreService.instance.getOperations();
+    _historyFuture = FinancialFirestoreService.instance.getOperationHistory();
   }
 
   @override
@@ -34,7 +34,8 @@ class _OperationHistoryScreenState extends State<OperationHistoryScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.refreshToken != widget.refreshToken) {
       setState(() {
-        _historyFuture = FinancialFirestoreService.instance.getOperations();
+        _historyFuture =
+            FinancialFirestoreService.instance.getOperationHistory();
       });
     }
   }

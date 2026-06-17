@@ -1,5 +1,7 @@
 import 'package:financiera_efectiva_ventas/app.dart';
-import 'package:financiera_efectiva_ventas/data/repositories/mock_sales_repository.dart';
+import 'package:financiera_efectiva_ventas/data/demo/demo_scoring_seed.dart';
+import 'package:financiera_efectiva_ventas/data/mappers/demo_scoring_mapper.dart';
+import 'package:financiera_efectiva_ventas/data/repositories/firestore_sales_repository.dart';
 import 'package:financiera_efectiva_ventas/data/services/credit_scoring_service.dart';
 import 'package:financiera_efectiva_ventas/data/services/firestore_sales_service.dart';
 import 'package:financiera_efectiva_ventas/data/services/power_bi_export_service.dart';
@@ -11,8 +13,14 @@ void main() {
     await tester.pumpWidget(const FuerzaVentasApp());
     await tester.pumpAndSettle();
 
+    expect(find.text('Ingreso asesor'), findsOneWidget);
+    await tester.tap(find.text('Usar asesor demo'));
+    await tester.pump();
+    await tester.tap(find.text('Ingresar'));
+    await tester.pumpAndSettle();
+
     expect(find.text('Financiera Efectiva | Fuerza de Ventas'), findsOneWidget);
-    expect(find.text('Cartera diaria'), findsOneWidget);
+    expect(find.text('Cartera'), findsWidgets);
     expect(find.text('Maria Quispe Ramos'), findsWidgets);
     expect(find.text('Sincronizado'), findsOneWidget);
   });
@@ -91,7 +99,16 @@ void main() {
   });
 
   test('builds Firestore sync summary and Power BI dataset', () {
-    const repository = MockSalesRepository();
+    final demoClients = DemoScoringSeed.buildClients();
+    final routeClients = demoClients.take(4).toList();
+    final repository = FirestoreSalesRepository(
+      clients: demoClients.map((client) => client.toSalesClient()).toList(),
+      requests: demoClients.map((client) => client.toCreditRequest()).toList(),
+      routeVisits: [
+        for (var i = 0; i < routeClients.length; i++)
+          routeClients[i].toRouteVisit(i),
+      ],
+    );
     const firestore = FirestoreSalesService();
     const exporter = PowerBiExportService();
 
@@ -102,9 +119,9 @@ void main() {
       routeVisits: repository.routeVisits,
     );
 
-    expect(summary[FirestoreSalesService.clientsCollection], 3);
+    expect(summary[FirestoreSalesService.clientsCollection], 100);
     expect(dataset.clientsCsv, contains('dni,nombres,telefono'));
     expect(dataset.requestsCsv, contains('cliente,monto,segmento,estado'));
-    expect(dataset.totalRows, 10);
+    expect(dataset.totalRows, 204);
   });
 }

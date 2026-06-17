@@ -50,6 +50,18 @@ const ocupaciones = [
   'Ferretero',
   'Emprendedora digital',
 ];
+const direccionesHuancayo = [
+  'Plaza Constitucion, Huancayo',
+  'Real Plaza Huancayo',
+  'Mercado Modelo de Huancayo',
+  'Parque de la Identidad Wanka',
+  'Universidad Nacional del Centro del Peru',
+  'Estadio Huancayo',
+  'Jiron Real y Paseo La Brena',
+  'Terminal Terrestre Huancayo',
+  'Hospital Daniel Alcides Carrion',
+  'Feria Dominical de Huancayo',
+];
 
 function argValue(name) {
   const index = process.argv.indexOf(name);
@@ -76,6 +88,8 @@ function buildClient(index) {
   const sbs = kind === 'rechazo' && index % 2 !== 0;
   const fraude = kind === 'rechazo' && index === 99;
   const puntualidad = kind === 'bajo' ? 96 + (index % 4) : kind === 'medio' ? 86 + (index % 8) : 42 + (index % 28);
+  const latitud = -12.0651 + (((index - 1) % 10) - 5) * 0.0045;
+  const longitud = -75.2049 + (Math.floor((index - 1) / 10) - 5) * 0.0042;
   const client = {
     id_cliente: `CLI-DEMO-${String(index).padStart(3, '0')}`,
     dni: String(71000000 + index),
@@ -100,6 +114,10 @@ function buildClient(index) {
     destino_credito: destino,
     destino_credito_otro: destino === 'Otros' ? 'Financiamiento especifico de temporada' : '',
     antiguedad_laboral_meses: kind === 'bajo' ? 62 + (index % 36) : kind === 'medio' ? 18 + (index % 34) : 3 + (index % 20),
+    direccion: direccionesHuancayo[(index - 1) % direccionesHuancayo.length],
+    latitud,
+    longitud,
+    estado_cliente: index <= 4 ? 'Visitar' : 'Visitado',
   };
   return { ...client, ...evaluate(client) };
 }
@@ -129,6 +147,7 @@ function evaluate(client) {
   return {
     ...decision,
     ...detalle,
+    estado_solicitud: client.id_cliente <= 'CLI-DEMO-004' ? 'Pendiente' : decision.estado_evaluacion === 'Aprobado' ? 'Aceptado' : 'Negado',
     capacidad_pago_disponible: capacidad,
     ratio_endeudamiento: Number(ratio.toFixed(2)),
   };

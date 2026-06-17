@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../config/theme.dart';
+import '../data/models/client.dart';
 import '../data/models/route_visit.dart';
 import '../data/repositories/sales_repository.dart';
 import '../data/services/geolocation_route_service.dart';
@@ -13,9 +14,16 @@ import '../widgets/app_shell_widgets.dart';
 import '../widgets/route_map.dart';
 
 class RouteScreen extends StatefulWidget {
-  const RouteScreen({super.key, required this.repository});
+  const RouteScreen({
+    super.key,
+    required this.repository,
+    required this.onClientSelected,
+    required this.onOpenApplication,
+  });
 
   final SalesRepository repository;
+  final ValueChanged<Client> onClientSelected;
+  final ValueChanged<Client> onOpenApplication;
 
   @override
   State<RouteScreen> createState() => _RouteScreenState();
@@ -35,6 +43,15 @@ class _RouteScreenState extends State<RouteScreen> {
     super.initState();
     visits = List.of(widget.repository.routeVisits);
     routeCalculation = _calculateRoute();
+  }
+
+  @override
+  void didUpdateWidget(covariant RouteScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository.routeVisits != widget.repository.routeVisits) {
+      visits = List.of(widget.repository.routeVisits);
+      routeCalculation = _calculateRoute();
+    }
   }
 
   @override
@@ -248,13 +265,17 @@ class _RouteScreenState extends State<RouteScreen> {
           _RouteVisitTile(
             order: i + 1,
             visit: visits[i],
-            onOpen: () => _showVisitSummary(context, visits[i]),
+            onOpen: () {
+              _selectVisitClient(visits[i]);
+              _showVisitSummary(context, visits[i]);
+            },
           ),
       ],
     );
   }
 
   void _showVisitSummary(BuildContext context, RouteVisit visit) {
+    _selectVisitClient(visit);
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -277,7 +298,12 @@ class _RouteScreenState extends State<RouteScreen> {
                 spacing: 8,
                 children: [
                   FilledButton.icon(
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () {
+                      final client = _clientForVisit(visit);
+                      if (client == null) return;
+                      Navigator.pop(context);
+                      widget.onOpenApplication(client);
+                    },
                     icon: const Icon(Icons.badge_outlined),
                     label: const Text('Ver ficha completa'),
                   ),
@@ -293,6 +319,17 @@ class _RouteScreenState extends State<RouteScreen> {
         );
       },
     );
+  }
+
+  void _selectVisitClient(RouteVisit visit) {
+    final match = _clientForVisit(visit);
+    if (match != null) widget.onClientSelected(match);
+  }
+
+  Client? _clientForVisit(RouteVisit visit) {
+    return widget.repository.clients
+        .where((client) => client.name == visit.client)
+        .firstOrNull;
   }
 
   double _distance(double lat1, double lng1, double lat2, double lng2) {

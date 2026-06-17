@@ -52,3 +52,19 @@ El modelo suma 100 puntos:
 Rechaza automaticamente cuando detecta lista negra, SBS negativo activo,
 fraude/suplantacion, capacidad de pago menor o igual a cero, ratio mayor a 90%
 o mas de 90 dias de mora acumulada.
+
+## Usuario asesor demo
+
+Para crear o actualizar el rol del asesor demo en Firestore:
+
+```powershell
+cd financiera_efectiva_ventas
+node scripts/seed_sales_users.js --service-account "..\firebase-service-account.json"
+```
+
+El script crea el documento:
+
+- Coleccion: `sales_users`
+- Documento: `IQcYbtTbfvVjvVCG59qEPd5xURu1`
+- Campos: `role = asesor`, `active = true`, `email`,
+  `name = Asesor Demo`.

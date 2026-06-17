@@ -3,12 +3,20 @@ import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../data/models/client.dart';
 import '../data/repositories/sales_repository.dart';
+import '../data/services/firestore_sales_service.dart';
 import '../widgets/app_shell_widgets.dart';
 
 class PortfolioScreen extends StatefulWidget {
-  const PortfolioScreen({super.key, required this.repository});
+  const PortfolioScreen({
+    super.key,
+    required this.repository,
+    required this.onRepositoryChanged,
+    required this.onClientSelected,
+  });
 
   final SalesRepository repository;
+  final VoidCallback onRepositoryChanged;
+  final ValueChanged<Client> onClientSelected;
 
   @override
   State<PortfolioScreen> createState() => _PortfolioScreenState();
@@ -16,31 +24,8 @@ class PortfolioScreen extends StatefulWidget {
 
 class _PortfolioScreenState extends State<PortfolioScreen> {
   final searchController = TextEditingController();
-  String filter = 'Todos';
-
-  static const filters = [
-    'Todos',
-    'Renovaciones',
-    'Nuevas',
-    'En mora',
-    'Visitados',
-  ];
-  static const managementTypes = [
-    'RENOVACION',
-    'AMPLIACION',
-    'NUEVA SOLICITUD',
-    'SEGUIMIENTO',
-    'RECUPERACION MORA',
-    'DESERTOR',
-  ];
-  static const priorities = ['ALTA', 'MEDIA', 'NORMAL'];
-  static const visitStates = [
-    'pendiente',
-    'visitado',
-    'no encontrado',
-    'reagendado',
-    'negocio cerrado',
-  ];
+  String clientStatus = 'Todos';
+  String requestStatus = 'Todos';
 
   @override
   void dispose() {
@@ -48,83 +33,62 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     super.dispose();
   }
 
-  List<Client> get _filteredClients {
+  List<Client> get filteredClients {
     final query = searchController.text.trim().toLowerCase();
     return widget.repository.clients.where((client) {
-      final index = widget.repository.clients.indexOf(client);
-      final management = managementTypes[index % managementTypes.length];
-      final visitState = visitStates[index % visitStates.length];
-      final matchesFilter = switch (filter) {
-        'Renovaciones' =>
-          management == 'RENOVACION' || management == 'AMPLIACION',
-        'Nuevas' => management == 'NUEVA SOLICITUD',
-        'En mora' => management == 'RECUPERACION MORA',
-        'Visitados' => visitState == 'visitado',
-        _ => true,
-      };
-      final lastDigits = client.dni.length >= 4
-          ? client.dni.substring(client.dni.length - 4)
-          : client.dni;
-      final matchesQuery =
+      final textMatch =
           query.isEmpty ||
           client.name.toLowerCase().contains(query) ||
-          lastDigits.contains(query);
-      return matchesFilter && matchesQuery;
+          client.dni.contains(query);
+      final clientStatusMatch =
+          clientStatus == 'Todos' || client.clientStatus == clientStatus;
+      final requestStatusMatch =
+          requestStatus == 'Todos' || client.requestStatus == requestStatus;
+      return textMatch && clientStatusMatch && requestStatusMatch;
     }).toList();
   }
 
   @override
   Widget build(BuildContext context) {
-    final clients = _filteredClients;
+    final clients = filteredClients;
     return AppScrollView(
       children: [
-        const SectionTitle(
-          title: 'Cartera diaria',
+        SectionTitle(
+          title: 'Cartera',
           subtitle:
-              'Clientes asignados, visitas del dia y trabajo offline-first.',
+              '${widget.repository.clients.length} clientes demo de scoring crediticio.',
         ),
-        const MetricsGrid(
-          metrics: [
-            Metric('Renovaciones', '18', Icons.repeat, AppTheme.brandBlue),
-            Metric('Visitas hoy', '12', Icons.location_on, AppTheme.brandNavy),
-            Metric(
-              'Monto potencial',
-              'S/ 96k',
-              Icons.payments,
-              AppTheme.brandCoral,
-            ),
-            Metric('Mora alerta', '3', Icons.warning_amber, AppTheme.brandGold),
-          ],
-        ),
-        const SizedBox(height: 16),
         Wrap(
           spacing: 12,
           runSpacing: 12,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             SizedBox(
-              width: 320,
+              width: 340,
               child: TextField(
                 controller: searchController,
                 onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(
                   prefixIcon: Icon(Icons.search),
-                  labelText: 'Buscar cliente o ultimos 4 digitos',
+                  labelText: 'Buscar por nombre o DNI',
                 ),
               ),
             ),
-            SegmentedButton<String>(
-              selected: {filter},
-              onSelectionChanged: (values) =>
-                  setState(() => filter = values.first),
-              segments: [
-                for (final item in filters)
-                  ButtonSegment(value: item, label: Text(item)),
-              ],
+            _FilterDropdown(
+              label: 'Estado cliente',
+              value: clientStatus,
+              values: const ['Todos', 'Visitar', 'Visitado'],
+              onChanged: (value) => setState(() => clientStatus = value),
             ),
-            const StatusPill(
-              label: 'Local + Firebase',
-              color: AppTheme.brandGold,
+            _FilterDropdown(
+              label: 'Estado solicitud',
+              value: requestStatus,
+              values: const ['Todos', 'Pendiente', 'Aceptado', 'Negado'],
+              onChanged: (value) => setState(() => requestStatus = value),
+            ),
+            StatusPill(
+              label: '${clients.length} resultados',
+              color: AppTheme.brandBlue,
             ),
           ],
         ),
@@ -133,7 +97,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
           const Card(
             child: Padding(
               padding: EdgeInsets.all(16),
-              child: Text('No hay clientes que coincidan con la busqueda.'),
+              child: Text('No hay clientes que coincidan con los filtros.'),
             ),
           )
         else
@@ -143,10 +107,11 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
             children: [
               for (final client in clients)
                 SizedBox(
-                  width: 380,
-                  child: _DailyClientCard(
+                  width: 390,
+                  child: _ClientCard(
                     client: client,
-                    index: widget.repository.clients.indexOf(client),
+                    onStatusChanged: _updateClientStatus,
+                    onSelected: widget.onClientSelected,
                   ),
                 ),
             ],
@@ -154,36 +119,90 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
       ],
     );
   }
+
+  Future<void> _updateClientStatus(Client client, String status) async {
+    try {
+      await const FirestoreSalesService().updateClientStatus(
+        clientId: client.clientId.isEmpty ? client.dni : client.clientId,
+        requestId: client.requestId,
+        status: status,
+      );
+      widget.onRepositoryChanged();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Cliente marcado como $status.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo actualizar el estado: $error')),
+      );
+    }
+  }
 }
 
-class _DailyClientCard extends StatelessWidget {
-  const _DailyClientCard({required this.client, required this.index});
+class _FilterDropdown extends StatelessWidget {
+  const _FilterDropdown({
+    required this.label,
+    required this.value,
+    required this.values,
+    required this.onChanged,
+  });
 
-  final Client client;
-  final int index;
+  final String label;
+  final String value;
+  final List<String> values;
+  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final management = _PortfolioScreenState
-        .managementTypes[index % _PortfolioScreenState.managementTypes.length];
-    final priority = _PortfolioScreenState
-        .priorities[index % _PortfolioScreenState.priorities.length];
-    final visitState = _PortfolioScreenState
-        .visitStates[index % _PortfolioScreenState.visitStates.length];
-    final totalDebt = num.tryParse(client.totalDebt.replaceAll(',', '')) ?? 0;
-    final amount =
-        'S/ ${(totalDebt + client.preScore * 20).toStringAsFixed(0)}';
+    return SizedBox(
+      width: 210,
+      child: DropdownButtonFormField<String>(
+        initialValue: value,
+        decoration: InputDecoration(labelText: label),
+        items: [
+          for (final item in values)
+            DropdownMenuItem(value: item, child: Text(item)),
+        ],
+        onChanged: (value) {
+          if (value != null) onChanged(value);
+        },
+      ),
+    );
+  }
+}
+
+class _ClientCard extends StatelessWidget {
+  const _ClientCard({
+    required this.client,
+    required this.onStatusChanged,
+    required this.onSelected,
+  });
+
+  final Client client;
+  final void Function(Client client, String status) onStatusChanged;
+  final ValueChanged<Client> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
     final initial = client.name.trim().isEmpty
         ? '?'
         : client.name.trim().characters.first.toUpperCase();
-    final priorityColor = switch (priority) {
-      'ALTA' => Colors.red,
-      'MEDIA' => AppTheme.brandGold,
-      _ => Colors.green,
+    final requestColor = switch (client.requestStatus) {
+      'Aceptado' => Colors.green,
+      'Pendiente' => AppTheme.brandGold,
+      _ => AppTheme.brandCoral,
     };
+    final clientColor = client.clientStatus == 'Visitado'
+        ? AppTheme.brandNavy
+        : AppTheme.brandGold;
 
     return Card(
-      child: Padding(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => onSelected(client),
+        child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -202,11 +221,10 @@ class _DailyClientCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
-                      Text('DNI ${_maskedDocument(client.dni)}'),
+                      Text('DNI ${client.dni}'),
                     ],
                   ),
                 ),
-                StatusPill(label: priority, color: priorityColor),
               ],
             ),
             const SizedBox(height: 12),
@@ -214,83 +232,36 @@ class _DailyClientCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                StatusPill(label: management, color: AppTheme.brandBlue),
-                StatusPill(label: visitState, color: AppTheme.brandNavy),
-                StatusPill(label: amount, color: AppTheme.brandCoral),
+                StatusPill(label: client.clientStatus, color: clientColor),
+                StatusPill(label: client.requestStatus, color: requestColor),
+                StatusPill(
+                  label: 'Score ${client.preScore}',
+                  color: AppTheme.brandBlue,
+                ),
               ],
             ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: () => _showClientSheet(context, client),
-                  icon: const Icon(Icons.badge_outlined),
-                  label: const Text('Ver ficha'),
-                ),
-                FilledButton.icon(
-                  onPressed: () => _showMessage(
-                    context,
-                    'Solicitud iniciada para ${client.name}',
-                  ),
-                  icon: const Icon(Icons.edit_document),
-                  label: const Text('Iniciar solicitud'),
-                ),
-                IconButton.filledTonal(
-                  tooltip: 'Ver en mapa',
-                  onPressed: () => _showMessage(
-                    context,
-                    'Marcador abierto en ruta del dia.',
-                  ),
-                  icon: const Icon(Icons.map_outlined),
-                ),
+            Text('Direccion: ${client.location}'),
+            Text('Solicitud: S/ ${client.requestAmount.toStringAsFixed(0)}'),
+            Text('Destino: ${client.creditPurpose}'),
+            const SizedBox(height: 12),
+            SegmentedButton<String>(
+              selected: {client.clientStatus},
+              onSelectionChanged: (values) {
+                final status = values.first;
+                if (status != client.clientStatus) {
+                  onStatusChanged(client, status);
+                }
+              },
+              segments: const [
+                ButtonSegment(value: 'Visitar', label: Text('Visitar')),
+                ButtonSegment(value: 'Visitado', label: Text('Visitado')),
               ],
             ),
           ],
         ),
       ),
+      ),
     );
-  }
-
-  static String _maskedDocument(String dni) {
-    if (dni.length <= 3) return '***$dni';
-    return '***${dni.substring(dni.length - 3)}';
-  }
-
-  void _showClientSheet(BuildContext context, Client client) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(client.name, style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
-              Text('Telefono: ${client.phone}'),
-              Text('Negocio: ${client.businessName} - ${client.businessType}'),
-              Text('Ubicacion: ${client.location}'),
-              Text('SBS: ${client.sbsRating}'),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.check),
-                label: const Text('Cerrar ficha rapida'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _showMessage(BuildContext context, String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
   }
 }

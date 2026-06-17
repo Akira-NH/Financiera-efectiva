@@ -53,8 +53,22 @@ class FieldApplicationService {
     return decoded;
   }
 
-  Future<String> submitToCommittee(Map<String, Object?> payload) async {
-    final localId = payload['localId'] as String;
+  Future<void> syncPendingDraft() async {
+    final draft = await loadDraft();
+    if (draft == null || draft['localStatus'] != 'pendiente_envio') return;
+    final firestore = _firestore;
+    if (firestore == null) return;
+
+    try {
+      await _writeSubmission(firestore, draft);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_draftKey);
+    } catch (_) {
+      // Se reintentara de forma transparente en el proximo arranque/guardado.
+    }
+  }
+
+  Future<FieldSaveResult> submitToCommittee(Map<String, Object?> payload) async {
     final expedientNumber = 'EXP-${DateTime.now().millisecondsSinceEpoch}';
     final submittedPayload = {
       ...payload,
@@ -72,79 +86,160 @@ class FieldApplicationService {
         'localStatus': 'pendiente_envio',
         'syncStatus': 'pending',
       });
-      return expedientNumber;
+      return FieldSaveResult.local(
+        expedientNumber,
+        'Firebase no esta inicializado en esta ejecucion.',
+      );
     }
 
     try {
-      final batch = firestore.batch();
-      final requestRef = firestore.collection(requestsCollection).doc(localId);
-      batch.set(requestRef, submittedPayload, SetOptions(merge: true));
-      batch.set(
-        firestore.collection(draftsCollection).doc(localId),
-        {
-          ...payload,
-          'localStatus': 'enviado',
-          'syncStatus': 'synced',
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-      batch.set(
-        firestore.collection(bureauCollection).doc(localId),
-        {
-          'requestId': localId,
-          'dni': payload['dni'],
-          'rating': payload['bureauRating'],
-          'result': payload['bureauResult'],
-          'recommendation': payload['bureauRecommendation'],
-          'createdAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-      batch.set(
-        firestore.collection(progressCollection).doc(localId),
-        {
-          'requestId': localId,
-          'lastCompletedStep': 'Solicitud enviada',
-          'status': 'completed',
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-
-      final documents = payload['documents'];
-      if (documents is List) {
-        for (final item in documents) {
-          if (item is! Map) continue;
-          final documentType = item['type'] as String? ?? 'documento';
-          batch.set(
-            firestore
-                .collection(documentsCollection)
-                .doc('${localId}_$documentType'),
-            {
-              'requestId': localId,
-              'documentType': documentType,
-              'required': item['required'] as bool? ?? false,
-              'status': item['status'] as String? ?? 'PENDIENTE',
-              'storageUrl': item['storageUrl'] as String? ?? '',
-              'updatedAt': FieldValue.serverTimestamp(),
-            },
-            SetOptions(merge: true),
-          );
-        }
-      }
-
-      await batch.commit();
+      await _writeSubmission(firestore, submittedPayload);
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_draftKey);
-      return expedientNumber;
-    } catch (_) {
+      return FieldSaveResult.synced(expedientNumber);
+    } catch (error) {
       await saveDraft({
         ...payload,
         'localStatus': 'pendiente_envio',
         'syncStatus': 'pending',
       });
-      return expedientNumber;
+      return FieldSaveResult.local(expedientNumber, error.toString());
     }
   }
+
+  Future<void> _writeSubmission(
+    FirebaseFirestore firestore,
+    Map<String, Object?> payload,
+  ) async {
+    final localId = payload['localId'] as String;
+    final batch = firestore.batch();
+    final requestRef = firestore.collection(requestsCollection).doc(localId);
+    batch.set(requestRef, {
+      ...payload,
+      'syncStatus': 'synced',
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    final clientId = payload['clientId'] as String? ?? '';
+    final dni = payload['dni'] as String? ?? '';
+    if (clientId.isNotEmpty && clientId != localId) {
+      batch.set(
+        firestore
+            .collection('clients')
+            .doc(clientId)
+            .collection('creditRequests')
+            .doc(localId),
+        {
+          ...payload,
+          'syncStatus': 'synced',
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    }
+    final salesClientId = dni.isNotEmpty ? dni : clientId;
+    if (salesClientId.isNotEmpty) {
+      batch.set(
+        firestore.collection('sales_clients').doc(salesClientId),
+        {
+          'clientId': clientId,
+          'requestId': localId,
+          'dni': dni,
+          'nombres': payload['cliente'],
+          'telefono': payload['phone'],
+          'ubicacion': payload['businessAddress'],
+          'negocio': payload['businessName'],
+          'rubro': payload['businessType'],
+          'ingresos_mensuales': payload['monthlyIncome'],
+          'gastos_mensuales': payload['monthlyExpenses'],
+          'estado_cliente': payload['estado_cliente'],
+          'estado_solicitud': payload['estado_solicitud'],
+          'fieldVisitCompleted': payload['fieldVisitCompleted'],
+          'solicitud_completada': payload['solicitud_completada'],
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    }
+    batch.set(
+      firestore.collection(draftsCollection).doc(localId),
+      {
+        ...payload,
+        'localStatus': 'enviado',
+        'syncStatus': 'synced',
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+    batch.set(
+      firestore.collection(bureauCollection).doc(localId),
+      {
+        'requestId': localId,
+        'dni': payload['dni'],
+        'rating': payload['bureauRating'],
+        'result': payload['bureauResult'],
+        'recommendation': payload['bureauRecommendation'],
+        'createdAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+    batch.set(
+      firestore.collection(progressCollection).doc(localId),
+      {
+        'requestId': localId,
+        'lastCompletedStep': 'Solicitud enviada',
+        'status': 'completed',
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+
+    final documents = payload['documents'];
+    if (documents is List) {
+      for (final item in documents) {
+        if (item is! Map) continue;
+        final documentType = item['type'] as String? ?? 'documento';
+        batch.set(
+          firestore
+              .collection(documentsCollection)
+              .doc('${localId}_$documentType'),
+          {
+            'requestId': localId,
+            'documentType': documentType,
+            'required': item['required'] as bool? ?? false,
+            'status': item['status'] as String? ?? 'PENDIENTE',
+            'storageUrl': item['storageUrl'] as String? ?? '',
+            'localPath': item['localPath'] as String? ?? '',
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+      }
+    }
+
+    await batch.commit();
+  }
+}
+
+class FieldSaveResult {
+  const FieldSaveResult({
+    required this.expedientNumber,
+    required this.synced,
+    this.errorMessage = '',
+  });
+
+  factory FieldSaveResult.synced(String expedientNumber) {
+    return FieldSaveResult(expedientNumber: expedientNumber, synced: true);
+  }
+
+  factory FieldSaveResult.local(String expedientNumber, String errorMessage) {
+    return FieldSaveResult(
+      expedientNumber: expedientNumber,
+      synced: false,
+      errorMessage: errorMessage,
+    );
+  }
+
+  final String expedientNumber;
+  final bool synced;
+  final String errorMessage;
 }

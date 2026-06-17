@@ -1,12 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/material.dart';
 
+import '../demo/demo_scoring_seed.dart';
+import '../mappers/demo_scoring_mapper.dart';
 import '../models/client.dart';
 import '../models/credit_request.dart';
 import '../models/demo_scoring_client.dart';
 import '../models/route_visit.dart';
 import '../repositories/firestore_sales_repository.dart';
-import '../repositories/mock_sales_repository.dart';
 import '../repositories/sales_repository.dart';
 
 class FirestoreSalesService {
@@ -25,37 +27,171 @@ class FirestoreSalesService {
 
   Future<SalesRepository> loadRepository() async {
     final firestore = _firestore;
-    const fallback = MockSalesRepository();
+    final fallback = _repositoryFromDemo(DemoScoringSeed.buildClients());
     if (firestore == null) return fallback;
 
-    late final List<QuerySnapshot<Map<String, dynamic>>> snapshots;
+    late final QuerySnapshot<Map<String, dynamic>> demoSnapshot;
+    late final QuerySnapshot<Map<String, dynamic>> requestSnapshot;
     try {
-      snapshots = await Future.wait([
-        firestore.collection(clientsCollection).get(),
+      final snapshots = await Future.wait([
+        firestore
+            .collection(demoScoringClientsCollection)
+            .orderBy('id_cliente')
+            .get(),
         firestore.collection(requestsCollection).get(),
-        firestore.collection(routeVisitsCollection).get(),
       ]);
+      demoSnapshot = snapshots[0];
+      requestSnapshot = snapshots[1];
     } catch (_) {
       return fallback;
     }
 
-    final clients = snapshots[0].docs
-        .map((doc) => Client.fromJson(doc.data()))
-        .where((client) => client.dni.isNotEmpty || client.name.isNotEmpty)
+    final demoClients = demoSnapshot.docs
+        .map((doc) => DemoScoringClient.fromJson(doc.data()))
+        .where((client) => client.idCliente.isNotEmpty)
         .toList();
-    final requests = snapshots[1].docs
+
+    final externalRequests = requestSnapshot.docs
         .map((doc) => CreditRequest.fromJson(doc.data(), id: doc.id))
         .where((request) => request.client.isNotEmpty)
         .toList();
-    final routeVisits = snapshots[2].docs
-        .map((doc) => RouteVisit.fromJson(doc.data()))
-        .where((visit) => visit.client.isNotEmpty)
-        .toList();
 
+    return demoClients.isEmpty
+        ? fallback
+        : _repositoryFromDemo(demoClients, externalRequests: externalRequests);
+  }
+
+  Stream<SalesRepository> watchRepository() async* {
+    final firestore = _firestore;
+    final fallback = _repositoryFromDemo(DemoScoringSeed.buildClients());
+    if (firestore == null) {
+      yield fallback;
+      return;
+    }
+
+    List<DemoScoringClient> demoClients;
+    try {
+      final demoSnapshot = await firestore
+          .collection(demoScoringClientsCollection)
+          .orderBy('id_cliente')
+          .get();
+      demoClients = demoSnapshot.docs
+          .map((doc) => DemoScoringClient.fromJson(doc.data()))
+          .where((client) => client.idCliente.isNotEmpty)
+          .toList();
+      if (demoClients.isEmpty) demoClients = DemoScoringSeed.buildClients();
+    } catch (_) {
+      demoClients = DemoScoringSeed.buildClients();
+    }
+
+    yield _repositoryFromDemo(demoClients);
+
+    try {
+      await for (final requestSnapshot
+          in firestore.collection(requestsCollection).snapshots()) {
+        final externalRequests = requestSnapshot.docs
+            .map((doc) => CreditRequest.fromJson(doc.data(), id: doc.id))
+            .where((request) => request.client.isNotEmpty)
+            .toList();
+        yield _repositoryFromDemo(
+          demoClients,
+          externalRequests: externalRequests,
+        );
+      }
+    } catch (_) {
+      yield fallback;
+    }
+  }
+
+  SalesRepository _repositoryFromDemo(
+    List<DemoScoringClient> demoClients, {
+    List<CreditRequest> externalRequests = const [],
+  }) {
+    final realExternal = externalRequests.where(_isRealExternalRequest).toList();
+    final routeClients = demoClients.take(4).toList();
     return FirestoreSalesRepository(
-      clients: clients.isEmpty ? fallback.clients : clients,
-      requests: requests.isEmpty ? fallback.requests : requests,
-      routeVisits: routeVisits.isEmpty ? fallback.routeVisits : routeVisits,
+      clients: [
+        ...demoClients.map((client) => client.toSalesClient()),
+        ...realExternal.map(_clientFromRequest),
+      ],
+      requests: [
+        ...demoClients.map((client) => client.toCreditRequest()),
+        ...externalRequests,
+      ],
+      routeVisits: [
+        for (var i = 0; i < routeClients.length; i++)
+          routeClients[i].toRouteVisit(i),
+        for (var i = 0; i < realExternal.length; i++)
+          _routeVisitFromRequest(realExternal[i], i + routeClients.length),
+      ],
+    );
+  }
+
+  Client _clientFromRequest(CreditRequest request) {
+    final status = _normalizedRequestStatus(request.status);
+    return Client(
+      clientId: request.clientId.isEmpty ? request.id : request.clientId,
+      requestId: request.id,
+      name: request.client,
+      dni: request.dni.isEmpty ? request.clientId : request.dni,
+      phone: request.phone,
+      location: request.locationLabel,
+      age: 0,
+      businessName: request.businessName.isEmpty
+          ? 'Solicitud nueva'
+          : request.businessName,
+      businessType: request.businessType.isEmpty
+          ? request.purpose
+          : request.businessType,
+      businessAge: 'Por registrar',
+      premises: 'Por registrar',
+      sbsRating: 'Por evaluar',
+      totalDebt: request.debt.toStringAsFixed(0),
+      preScore: request.score,
+      segment: status,
+      renewalDate: 'Visitar',
+      monthlyIncome: request.monthlyIncome,
+      monthlyExpenses: request.monthlyExpenses,
+      currentInstallments: request.currentInstallments,
+      requestAmount: request.amountValue,
+      termMonths: request.termMonths,
+      creditPurpose: request.purpose,
+      clientStatus: request.clientStatus == 'Visitado' ? 'Visitado' : 'Visitar',
+      requestStatus: status,
+      recommendation: request.recommendation,
+      latitude: request.latitude,
+      longitude: request.longitude,
+      fieldVisitCompleted: request.fieldVisitCompleted,
+    );
+  }
+
+  String _normalizedRequestStatus(String status) {
+    final value = status.trim().toLowerCase();
+    if (value == 'aceptado') return 'Aceptado';
+    if (value == 'negado' || value == 'rechazado') return 'Negado';
+    return 'Pendiente';
+  }
+
+  bool _isRealExternalRequest(CreditRequest request) {
+    return !request.id.startsWith('CLI-DEMO-') &&
+        !request.clientId.startsWith('CLI-DEMO-');
+  }
+
+  RouteVisit _routeVisitFromRequest(CreditRequest request, int index) {
+    return RouteVisit(
+      '${8 + index}:30',
+      request.client,
+      request.locationLabel.isEmpty
+          ? 'Ubicacion registrada'
+          : request.locationLabel,
+      _normalizedRequestStatus(request.status) == 'Aceptado'
+          ? 'Solicitud aceptada'
+          : 'Nueva solicitud',
+      _normalizedRequestStatus(request.status) == 'Aceptado'
+          ? const Color(0xFF2A9D8F)
+          : const Color(0xFF3135FF),
+      request.latitude,
+      request.longitude,
     );
   }
 
@@ -259,6 +395,88 @@ class FirestoreSalesService {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     });
+  }
+
+  Future<void> updateCreditDecision({
+    required String clientId,
+    required String requestId,
+    required String decision,
+  }) async {
+    final firestore = _firestore;
+    if (firestore == null) return;
+    if (requestId.isEmpty) {
+      throw StateError('La solicitud no tiene un identificador valido.');
+    }
+    final normalized = decision == 'Aceptado' ? 'Aceptado' : 'Negado';
+    final payload = {
+      'estado_solicitud': normalized,
+      'estado': normalized,
+      'status': normalized,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    final batch = firestore.batch();
+    if (clientId.startsWith('CLI-DEMO-')) {
+      batch.set(
+        firestore.collection(demoScoringClientsCollection).doc(clientId),
+        payload,
+        SetOptions(merge: true),
+      );
+    }
+    batch.set(
+      firestore.collection(requestsCollection).doc(requestId),
+      payload,
+      SetOptions(merge: true),
+    );
+    if (clientId.isNotEmpty && clientId != requestId) {
+      batch.set(
+        firestore
+            .collection('clients')
+            .doc(clientId)
+            .collection('creditRequests')
+            .doc(requestId),
+        payload,
+        SetOptions(merge: true),
+      );
+    }
+    await batch.commit();
+  }
+
+  Future<void> updateClientStatus({
+    required String clientId,
+    required String requestId,
+    required String status,
+  }) async {
+    final firestore = _firestore;
+    if (firestore == null) return;
+    final normalized = status == 'Visitado' ? 'Visitado' : 'Visitar';
+    final payload = {
+      'estado_cliente': normalized,
+      'clientStatus': normalized,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    final batch = firestore.batch();
+    if (clientId.startsWith('CLI-DEMO-')) {
+      batch.set(
+        firestore.collection(demoScoringClientsCollection).doc(clientId),
+        payload,
+        SetOptions(merge: true),
+      );
+    }
+    if (requestId.isNotEmpty && !requestId.startsWith('CLI-DEMO-')) {
+      batch.set(
+        firestore.collection(requestsCollection).doc(requestId),
+        payload,
+        SetOptions(merge: true),
+      );
+    }
+    if (clientId.isNotEmpty && !clientId.startsWith('CLI-DEMO-')) {
+      batch.set(
+        firestore.collection(clientsCollection).doc(clientId),
+        payload,
+        SetOptions(merge: true),
+      );
+    }
+    await batch.commit();
   }
 
   Map<String, int> buildSyncSummary(SalesRepository repository) {
