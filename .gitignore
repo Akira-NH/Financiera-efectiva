@@ -1,4 +1,65 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.local
+*.secret
+secrets/
+credentials/
+
+# Firebase / Google Cloud private credentials
 firebase-service-account.json
 *service-account*.json
 *firebase-adminsdk*.json
 *.private-key.json
+serviceAccountKey.json
+google-application-credentials.json
+application_default_credentials.json
+*.credentials.json
+
+# Firebase app config generated locally
+**/android/app/google-services.json
+**/ios/Runner/GoogleService-Info.plist
+**/macos/Runner/GoogleService-Info.plist
+
+# Android signing keys
+**/android/key.properties
+**/android/app/key.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+*.crt
+*.cer
+
+# iOS/macOS signing and provisioning
+*.mobileprovision
+*.provisionprofile
+*.xcuserstate
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/macos/Flutter/GeneratedPluginRegistrant.swift
+
+# Flutter/Dart build output and local tooling
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/build/
+**/coverage/
+**/.pub-cache/
+
+# IDE and OS local files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo

@@ -733,6 +733,11 @@ class FinancialFirestoreService {
   }
 
   Future<List<OperationHistoryItem>> getOperations() async {
+    return getOperationHistory();
+  }
+
+  // ignore: unused_element
+  Future<List<OperationHistoryItem>> _getOperationsLegacy() async {
     final firestore = _firestore;
     if (firestore == null) return OperationsMockData.history;
 
@@ -767,15 +772,13 @@ class FinancialFirestoreService {
         .collection('operations')
         .orderBy('createdAt', descending: true)
         .get();
-    final operationServiceIds = <String>{};
+    final operationKeys = <String>{};
     final history = <_OperationHistoryRow>[];
 
     for (final doc in operationsSnapshot.docs) {
       final data = doc.data();
-      final serviceId = data['serviceId'] as String?;
-      if (serviceId != null && serviceId.isNotEmpty) {
-        operationServiceIds.add(serviceId);
-      }
+      final historyKey = _historyDedupeKey(data, fallbackId: doc.id);
+      operationKeys.add(historyKey);
       history.add(
         _OperationHistoryRow(
           item: OperationHistoryItem(
@@ -797,9 +800,8 @@ class FinancialFirestoreService {
     for (final doc in movementsSnapshot.docs) {
       final data = doc.data();
       final title = data['title'] as String? ?? '';
-      final serviceId = data['serviceId'] as String?;
-      final hasOperation =
-          serviceId != null && operationServiceIds.contains(serviceId);
+      final historyKey = _historyDedupeKey(data, fallbackId: doc.id);
+      final hasOperation = operationKeys.contains(historyKey);
       if (!title.startsWith('Pago') || hasOperation) continue;
       history.add(
         _OperationHistoryRow(
@@ -824,6 +826,22 @@ class FinancialFirestoreService {
     });
 
     return history.map((row) => row.item).toList();
+  }
+
+  String _historyDedupeKey(Map<String, dynamic> data, {required String fallbackId}) {
+    final serviceId = data['serviceId'] as String?;
+    if (serviceId == null || serviceId.isEmpty) return fallbackId;
+    final billingPeriod = data['billingPeriod'] as String?;
+    final dueDate = data['dueDate'] as String?;
+    final createdAt = data['createdAt'];
+    final createdLabel = createdAt is Timestamp
+        ? _formatDate(createdAt.toDate())
+        : data['date'] as String? ?? fallbackId;
+    return [
+      serviceId,
+      billingPeriod ?? dueDate ?? createdLabel,
+      data['amount']?.toString() ?? '',
+    ].join('|');
   }
 
   List<ServiceBill> _defaultServiceBills() {
@@ -991,6 +1009,7 @@ class FinancialFirestoreService {
         'serviceType': bill.type,
         'companyName': bill.companyName,
         'dueDate': bill.dueDateLabel,
+        'billingPeriod': bill.billingPeriod,
       });
       transaction.set(movementsRef, {
         'title': title,
@@ -1002,6 +1021,7 @@ class FinancialFirestoreService {
         'serviceType': bill.type,
         'companyName': bill.companyName,
         'dueDate': bill.dueDateLabel,
+        'billingPeriod': bill.billingPeriod,
       });
     });
   }
