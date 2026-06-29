@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Financiera Efectiva | Web</title>
+    <link rel="stylesheet" href="./styles.css?v=login-layout-2" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="loginView" class="login-view">
+        <div class="brand-panel">
+          <img class="brand-logo" src="./assets/brand-icon.png" alt="Financiera Efectiva" />
+          <h1>Financiera Efectiva</h1>
+        </div>
+
+        <section class="login-card">
+          <form id="loginForm" class="auth-form">
+            <h2>Ingresar</h2>
+            <label>
+              Email:
+              <input id="emailInput" type="email" autocomplete="email" required />
+            </label>
+            <label>
+              Contraseña:
+              <input
+                id="passwordInput"
+                type="password"
+                autocomplete="current-password"
+                required
+              />
+            </label>
+            <div class="auth-links auth-links-top">
+              <a class="link-button" href="#/auth/reset" data-auth-mode="reset">
+                Olvidaste tu contraseña?
+              </a>
+            </div>
+            <button type="submit">Entrar -></button>
+            <div class="auth-links auth-links-bottom">
+              <span>No tienes una cuenta?</span>
+              <a class="link-button" href="#/auth/register" data-auth-mode="register">
+                Crear cuenta
+              </a>
+            </div>
+            <p id="loginError" class="form-error" role="alert"></p>
+          </form>
+
+          <form id="registerForm" class="auth-form hidden">
+            <h2>Crear cuenta cliente</h2>
+            <label>
+              Nombre completo
+              <input id="registerNameInput" autocomplete="name" required />
+            </label>
+            <label>
+              DNI
+              <input
+                id="registerDocumentInput"
+                inputmode="numeric"
+                maxlength="8"
+                pattern="[0-9]{8}"
+                required
+              />
+            </label>
+            <label>
+              Correo
+              <input id="registerEmailInput" type="email" autocomplete="email" required />
+            </label>
+            <label>
+              Contraseña
+              <input
+                id="registerPasswordInput"
+                type="password"
+                autocomplete="new-password"
+                minlength="6"
+                required
+              />
+            </label>
+            <button type="submit">Registrarme</button>
+            <a class="link-button" href="#/auth/login" data-auth-mode="login">
+              Ya tengo una cuenta
+            </a>
+            <p id="registerError" class="form-error" role="alert"></p>
+            <small>Tu cuenta quedara asociada a Financiera Efectiva.</small>
+          </form>
+
+          <form id="resetForm" class="auth-form hidden">
+            <h2>Recuperar contraseña</h2>
+            <label>
+              Correo
+              <input id="resetEmailInput" type="email" autocomplete="email" required />
+            </label>
+            <button type="submit">Enviar enlace</button>
+            <a class="link-button" href="#/auth/login" data-auth-mode="login">
+              Volver al ingreso
+            </a>
+            <p id="resetMessage" class="form-error" role="alert"></p>
+            <small>
+              Si el correo esta registrado, Firebase enviara el enlace de
+              recuperacion.
+            </small>
+          </form>
+        </section>
+      </section>
+
+      <section id="shellView" class="shell-view hidden">
+        <header class="topbar">
+          <div>
+            <div class="topbar-brand">
+              <img src="./assets/brand-icon.png" alt="Financiera Efectiva" />
+              <div>
+                <p id="roleEyebrow" class="eyebrow">Panel web</p>
+                <h1 id="pageTitle">Financiera Efectiva</h1>
+              </div>
+            </div>
+          </div>
+          <div class="session">
+            <span id="userLabel">Sesion activa</span>
+            <button id="logoutButton" type="button" class="ghost-button">
+              Salir
+            </button>
+          </div>
+        </header>
+
+        <section id="loadingState" class="state-card">Cargando datos...</section>
+        <section id="errorState" class="state-card error hidden"></section>
+        <section id="viewRoot" class="content hidden"></section>
+      </section>
+    </main>
+
+    <template id="requestTableTemplate">
+      <section class="workspace">
+        <article class="list-panel">
+          <div class="panel-heading">
+            <div>
+              <h2 data-title>Solicitudes</h2>
+              <p data-count>0 registros</p>
+            </div>
+            <button type="button" class="ghost-button" data-refresh>
+              Actualizar
+            </button>
+          </div>
+
+          <div class="filters" data-filters></div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th>DNI</th>
+                  <th>Monto</th>
+                  <th>Estado</th>
+                  <th>Atencion</th>
+                  <th>Asesor</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody data-body></tbody>
+            </table>
+          </div>
+          <div class="empty-state hidden" data-empty>
+            No hay registros para los filtros seleccionados.
+          </div>
+        </article>
+
+        <aside class="detail-panel">
+          <div class="detail-empty" data-detail-empty>
+            Selecciona una solicitud para revisar su detalle.
+          </div>
+          <div class="hidden" data-detail-content></div>
+        </aside>
+      </section>
+    </template>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
