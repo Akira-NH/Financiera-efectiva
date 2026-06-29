@@ -1,0 +1,17 @@
+services:
+  web:
+    build: ./admin_web
+    container_name: financiera-efectiva
+    restart: always
+    networks:
+      - cloud-network
+    logging: &default-logging
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  cloud-network:
+    name: ${CLOUD_NETWORK:-cloud}
+    external: true
