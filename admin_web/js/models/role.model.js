@@ -1,4 +1,3 @@
-import { adminEmailHints } from "../config/constants.js";
 import { normalizeText } from "../utils/format.js";
 
 export function isAdminRole(role) {
@@ -17,9 +16,4 @@ export function roleLabel(role) {
   if (role === "admin") return "Administrador";
   if (role === "advisor") return "Asesor";
   return "Cliente";
-}
-
-export function emailLooksAdmin(email) {
-  const clean = normalizeText(email);
-  return adminEmailHints.some((hint) => clean.includes(hint));
 }

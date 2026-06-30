@@ -7,8 +7,6 @@ export const firebaseConfig = {
   appId: "1:333875197359:web:2654582460492b37e32b5a",
 };
 
-export const adminEmailHints = ["admin", "administrador", "supervisor"];
-
 export const creditPurposes = [
   "Capital de trabajo",
   "Compra de mercaderia",

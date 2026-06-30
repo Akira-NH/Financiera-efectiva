@@ -19,7 +19,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 import { firebaseConfig } from "../config/constants.js";
-import { emailLooksAdmin, isAdminRole, isAdvisorRole } from "../models/role.model.js";
+import { isAdminRole, isAdvisorRole } from "../models/role.model.js";
 import { normalizeDemoClient, normalizeRequest } from "../models/request.model.js";
 import { normalizeText } from "../utils/format.js";
 
@@ -88,7 +88,6 @@ export async function readDocument(collectionName, id) {
 }
 
 export async function detectRole(user) {
-  const email = (user.email || "").toLowerCase();
   const salesProfile = await readDocument("sales_users", user.uid);
   const clientProfile = await readDocument("clients", user.uid);
   const rawRole = normalizeText(
@@ -96,7 +95,7 @@ export async function detectRole(user) {
   );
   const active = salesProfile?.active ?? salesProfile?.activo ?? true;
 
-  if (isAdminRole(rawRole) || emailLooksAdmin(email)) {
+  if (isAdminRole(rawRole)) {
     return { role: "admin", profile: salesProfile || clientProfile || {} };
   }
   if (isAdvisorRole(rawRole) && active) {

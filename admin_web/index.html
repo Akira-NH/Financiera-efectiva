@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Financiera Efectiva | Web</title>
-    <link rel="stylesheet" href="./styles.css?v=login-layout-2" />
+    <link rel="stylesheet" href="./styles.css?v=bank-ui-profile-4" />
   </head>
   <body>
     <main class="app-shell">
@@ -104,20 +104,32 @@
 
       <section id="shellView" class="shell-view hidden">
         <header class="topbar">
-          <div>
-            <div class="topbar-brand">
-              <img src="./assets/brand-icon.png" alt="Financiera Efectiva" />
-              <div>
-                <p id="roleEyebrow" class="eyebrow">Panel web</p>
-                <h1 id="pageTitle">Financiera Efectiva</h1>
-              </div>
-            </div>
+          <div class="topbar-brand">
+            <img src="./assets/brand-icon.png" alt="Financiera Efectiva" />
+            <span id="roleEyebrow" class="hidden">Panel web</span>
+            <span id="pageTitle" class="hidden">Financiera Efectiva</span>
           </div>
-          <div class="session">
-            <span id="userLabel">Sesion activa</span>
-            <button id="logoutButton" type="button" class="ghost-button">
-              Salir
+
+          <div class="profile-menu">
+            <span id="userLabel" class="hidden">Sesion activa</span>
+            <button
+              id="profileMenuButton"
+              type="button"
+              class="profile-button"
+              aria-label="Abrir men&uacute; de perfil"
+              aria-expanded="false"
+              aria-controls="profileMenu"
+            >
+              <span id="profileInitials">FE</span>
             </button>
+            <div id="profileMenu" class="profile-dropdown hidden" role="menu">
+              <button id="themeToggleButton" type="button" role="menuitem">
+                Cambiar a tema oscuro
+              </button>
+              <button id="logoutButton" type="button" role="menuitem">
+                Cerrar sesi&oacute;n
+              </button>
+            </div>
           </div>
         </header>
 
@@ -172,6 +184,6 @@
       </section>
     </template>
 
-    <script type="module" src="./app.js?v=web-clean-2"></script>
+    <script type="module" src="./app.js?v=security-web-1"></script>
   </body>
 </html>

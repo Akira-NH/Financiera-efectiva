@@ -23,8 +23,14 @@ import {
   renderClientPage,
 } from "../views/page.view.js?v=web-clean-2";
 
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+let inactivityTimerId = null;
+let operationInProgress = false;
+
 export function initApp() {
+  applyStoredTheme();
   bindAuthEvents();
+  bindSessionActivityEvents();
   window.addEventListener("hashchange", render);
   listenAuth(handleAuthChanged);
   renderAuthRoute();
@@ -50,6 +56,10 @@ function elements() {
     roleEyebrow: document.querySelector("#roleEyebrow"),
     pageTitle: document.querySelector("#pageTitle"),
     userLabel: document.querySelector("#userLabel"),
+    profileInitials: document.querySelector("#profileInitials"),
+    profileMenuButton: document.querySelector("#profileMenuButton"),
+    profileMenu: document.querySelector("#profileMenu"),
+    themeToggleButton: document.querySelector("#themeToggleButton"),
     logoutButton: document.querySelector("#logoutButton"),
     loadingState: document.querySelector("#loadingState"),
     errorState: document.querySelector("#errorState"),
@@ -80,7 +90,17 @@ function bindAuthEvents() {
   });
   els.registerForm.addEventListener("submit", submitRegisterForm);
   els.resetForm.addEventListener("submit", submitResetForm);
-  els.logoutButton.addEventListener("click", () => logout());
+  els.logoutButton.addEventListener("click", () => secureLogout());
+  els.profileMenuButton.addEventListener("click", toggleProfileMenu);
+  els.themeToggleButton.addEventListener("click", toggleTheme);
+  document.addEventListener("click", closeProfileMenuOnOutsideClick);
+  document.addEventListener("keydown", closeProfileMenuOnEscape);
+}
+
+function bindSessionActivityEvents() {
+  ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((eventName) => {
+    window.addEventListener(eventName, resetInactivityTimer, { passive: true });
+  });
 }
 
 function setAuthMode(mode) {
@@ -154,11 +174,13 @@ async function handleAuthChanged(user) {
   clearSessionData();
 
   if (!user) {
+    stopInactivityTimer();
     showLogin();
     renderAuthRoute();
     return;
   }
 
+  resetInactivityTimer();
   showShell();
   setLoading(true);
   try {
@@ -337,11 +359,25 @@ function bindAdvisorFieldForm(rows) {
   if (!row) return;
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (operationInProgress) return;
+    let payload;
     try {
-      await saveAdvisorFieldForm(row, buildAdvisorPayload(new FormData(form)));
+      payload = buildAdvisorPayload(new FormData(form));
+    } catch (error) {
+      state.actionMessage = error?.message || "Revisa los datos ingresados.";
+      render();
+      return;
+    }
+    operationInProgress = true;
+    setFormDisabled(form, true);
+    state.actionMessage = "Guardando ficha...";
+    try {
+      await saveAdvisorFieldForm(row, payload);
       state.actionMessage = "Ficha guardada y sincronizada.";
     } catch (error) {
       state.actionMessage = error?.message || "No se pudo guardar la ficha.";
+    } finally {
+      operationInProgress = false;
     }
     render();
   });
@@ -355,6 +391,9 @@ async function handleAdvisorAction(button) {
   });
   const row = rows.find((item) => item.key === state.selectedKey);
   if (!row) return;
+  if (operationInProgress) return;
+  operationInProgress = true;
+  button.disabled = true;
   const action = button.dataset.action;
   state.actionMessage = "Guardando cambio...";
   render();
@@ -373,6 +412,8 @@ async function handleAdvisorAction(button) {
     }
   } catch (error) {
     state.actionMessage = error?.message || "No se pudo guardar el cambio.";
+  } finally {
+    operationInProgress = false;
   }
   render();
 }
@@ -383,6 +424,12 @@ function updateFilter(event) {
   state.filters[key] =
     key === "search" || key === "advisor" ? value.toLowerCase() : value;
   render();
+}
+
+function setFormDisabled(form, disabled) {
+  form.querySelectorAll("button, input, select, textarea").forEach((field) => {
+    field.disabled = disabled;
+  });
 }
 
 function requestLocation() {
@@ -410,7 +457,10 @@ function requestLocation() {
 
 async function submitClientRequest(event) {
   event.preventDefault();
+  if (operationInProgress) return;
   const form = event.currentTarget;
+  operationInProgress = true;
+  setFormDisabled(form, true);
   const amount = asNumber(form.elements.amount.value);
   const termMonths = Math.round(asNumber(form.elements.term.value));
   const purposeValue = form.elements.purpose.value;
@@ -421,16 +471,19 @@ async function submitClientRequest(event) {
 
   if (amount <= 0) {
     state.actionMessage = "El monto debe ser mayor a cero.";
+    operationInProgress = false;
     render();
     return;
   }
   if (termMonths <= 0) {
     state.actionMessage = "El plazo debe ser mayor a cero.";
+    operationInProgress = false;
     render();
     return;
   }
   if (!cleanPurpose) {
     state.actionMessage = "Selecciona o especifica el destino del credito.";
+    operationInProgress = false;
     render();
     return;
   }
@@ -448,6 +501,8 @@ async function submitClientRequest(event) {
     state.clientLocation = null;
   } catch (error) {
     state.actionMessage = error?.message || "No se pudo enviar la solicitud.";
+  } finally {
+    operationInProgress = false;
   }
   render();
 }
@@ -561,7 +616,109 @@ function renderHeader(page) {
   const pageTitle = navConfig[state.role]?.find((item) => item.id === page)?.title;
   els.roleEyebrow.textContent = eyebrow;
   els.pageTitle.textContent = pageTitle || title;
-  els.userLabel.textContent = `${state.user.email || "Sesion activa"} - ${roleLabel(state.role)}`;
+  els.userLabel.textContent = roleLabel(state.role);
+  els.profileInitials.textContent = profileInitials();
+  updateThemeLabel();
+}
+
+function toggleProfileMenu() {
+  const els = elements();
+  const isOpen = !els.profileMenu.classList.contains("hidden");
+  els.profileMenu.classList.toggle("hidden", isOpen);
+  els.profileMenuButton.setAttribute("aria-expanded", String(!isOpen));
+}
+
+function closeProfileMenuOnOutsideClick(event) {
+  const els = elements();
+  if (
+    els.profileMenu?.classList.contains("hidden") ||
+    els.profileMenu?.contains(event.target) ||
+    els.profileMenuButton?.contains(event.target)
+  ) {
+    return;
+  }
+  closeProfileMenu();
+}
+
+function closeProfileMenuOnEscape(event) {
+  if (event.key === "Escape") closeProfileMenu();
+}
+
+function closeProfileMenu() {
+  const els = elements();
+  els.profileMenu?.classList.add("hidden");
+  els.profileMenuButton?.setAttribute("aria-expanded", "false");
+}
+
+async function secureLogout() {
+  closeProfileMenu();
+  stopInactivityTimer();
+  cleanupListeners();
+  clearSessionData();
+  operationInProgress = false;
+  state.user = null;
+  state.role = "";
+  state.roleProfile = null;
+  state.loading = false;
+  try {
+    await logout();
+  } finally {
+    window.location.hash = "#/auth/login";
+    showLogin();
+    renderAuthRoute();
+  }
+}
+
+function resetInactivityTimer() {
+  if (!state.user) return;
+  stopInactivityTimer();
+  inactivityTimerId = window.setTimeout(() => {
+    secureLogout();
+  }, INACTIVITY_TIMEOUT_MS);
+}
+
+function stopInactivityTimer() {
+  if (!inactivityTimerId) return;
+  window.clearTimeout(inactivityTimerId);
+  inactivityTimerId = null;
+}
+
+function applyStoredTheme() {
+  const storedTheme = localStorage.getItem("efectiva-theme");
+  document.body.dataset.theme = storedTheme === "dark" ? "dark" : "light";
+}
+
+function toggleTheme() {
+  const nextTheme = document.body.dataset.theme === "dark" ? "light" : "dark";
+  document.body.dataset.theme = nextTheme;
+  localStorage.setItem("efectiva-theme", nextTheme);
+  updateThemeLabel();
+  closeProfileMenu();
+}
+
+function updateThemeLabel() {
+  const button = elements().themeToggleButton;
+  if (!button) return;
+  button.textContent =
+    document.body.dataset.theme === "dark"
+      ? "Cambiar a tema claro"
+      : "Cambiar a tema oscuro";
+}
+
+function profileInitials() {
+  const profileName =
+    state.clientProfile?.fullName ||
+    state.roleProfile?.fullName ||
+    state.roleProfile?.name ||
+    state.user?.displayName ||
+    "";
+  const source = profileName || state.user?.email || "FE";
+  const words = source
+    .replace(/@.*/, "")
+    .split(/[.\s_-]+/)
+    .filter(Boolean);
+  const initials = words.length > 1 ? `${words[0][0]}${words[1][0]}` : source.slice(0, 2);
+  return initials.toUpperCase();
 }
 
 function showLogin() {
