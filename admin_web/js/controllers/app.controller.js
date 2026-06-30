@@ -21,7 +21,7 @@ import {
   renderAdminPage,
   renderAdvisorPage,
   renderClientPage,
-} from "../views/page.view.js";
+} from "../views/page.view.js?v=web-clean-2";
 
 export function initApp() {
   bindAuthEvents();

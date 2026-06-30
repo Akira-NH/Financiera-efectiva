@@ -34,7 +34,7 @@ export function pageHeading(title, subtitle) {
     <div class="page-heading">
       <div>
         <h2>${escapeHtml(title)}</h2>
-        <p>${escapeHtml(subtitle)}</p>
+        ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
       </div>
     </div>
   `;
@@ -262,7 +262,6 @@ export function renderProfileCard(profile, user) {
       <div class="panel-heading">
         <div>
           <h2>Datos personales</h2>
-          <p>Informacion registrada en Firebase.</p>
         </div>
       </div>
       <div class="detail-section">

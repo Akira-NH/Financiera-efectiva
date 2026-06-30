@@ -17,7 +17,7 @@ import {
   renderRoleLayout,
   renderRouteCard,
   renderTracking,
-} from "./components.view.js";
+} from "./components.view.js?v=web-clean-2";
 
 export function renderAdminPage({ page, rows, filtered, selected, filters, actionMessage }) {
   let content = "";
@@ -90,17 +90,17 @@ export function renderClientPage({ page, state, requests }) {
       <section class="client-grid">
         ${renderProfileCard(profile, state.user)}
         <article class="list-panel">
-          <div class="panel-heading"><div><h2>Ultimas solicitudes</h2><p>Estados sincronizados con la app movil.</p></div></div>
+          <div class="panel-heading"><div><h2>Ultimas solicitudes</h2></div></div>
           ${renderClientRequests(requests.slice(0, 5))}
         </article>
       </section>
     `;
   } else if (page === "solicitudes") {
     content = `
-      ${pageHeading("Solicitudes", "Crea y consulta solicitudes usando el mismo flujo de la app movil.")}
+      ${pageHeading("Solicitudes", "")}
       <section class="client-grid">
         <article class="list-panel">
-          <div class="panel-heading"><div><h2>Nueva solicitud</h2><p>Se enviara al flujo de Fuerza de Ventas.</p></div></div>
+          <div class="panel-heading"><div><h2>Nueva solicitud</h2></div></div>
           ${renderClientRequestForm(state.clientLocation, state.actionMessage)}
         </article>
         <article class="list-panel">
@@ -111,12 +111,12 @@ export function renderClientPage({ page, state, requests }) {
     `;
   } else if (page === "creditos") {
     content = `
-      ${pageHeading("Creditos", "Solo se muestra prestamo activo con aprobacion y desembolso real.")}
+      ${pageHeading("Creditos", "")}
       <article class="list-panel">${renderActiveLoan(visibleLoan, state.installments)}</article>
     `;
   } else {
     content = `
-      ${pageHeading("Perfil", "Datos personales registrados en la base compartida.")}
+      ${pageHeading("Perfil", "")}
       ${renderProfileCard(profile, state.user)}
     `;
   }
@@ -142,7 +142,7 @@ export function renderAdvisorPage({ page, rows, filtered, selected, filters, act
   } else if (page === "ruta") {
     const routeRows = buildRouteRows(rows);
     content = `
-      ${pageHeading("Ruta", "Cuatro clientes demo asignados y nuevas solicitudes reales en ruta.")}
+      ${pageHeading("Ruta", "")}
       <section class="route-panel">
         <div class="route-grid">
           ${routeRows.length
